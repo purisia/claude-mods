@@ -156,6 +156,8 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || !(await read($, isOn))) return next(e)
 
+    // 같은 띠에 그리는 다른 mod의 것은 미터기 위에 둔다
+    const above = await next(e)
     await read($, tick)
     if (!place) place = await loadPlace($)
     const level = await read($, effort)
@@ -271,31 +273,37 @@ export const register: Register = (on, options) => {
     const rows = 5 + (fuel ? 1 : 0)
     if (e.props.maxRows < rows) {
       return (
-        <Box>
-          <Text wrap="truncate-end">
-            <Text color={theme.accent}>{theme.name.slice(0, 2)} </Text>
-            <Text bold>{carName(model)} </Text>
-          </Text>
-          {meter}
+        <Box flexDirection="column">
+          {above}
+          <Box>
+            <Text wrap="truncate-end">
+              <Text color={theme.accent}>{theme.name.slice(0, 2)} </Text>
+              <Text bold>{carName(model)} </Text>
+            </Text>
+            {meter}
+          </Box>
         </Box>
       )
     }
 
     return (
-      <Box
-        borderStyle="round"
-        borderColor={isSurcharge ? 'red' : theme.border}
-        backgroundColor={theme.body}
-        flexDirection="column"
-        paddingX={1}
-      >
-        <Box justifyContent="space-between">
-          {header}
-          {lamps}
+      <Box flexDirection="column">
+        {above}
+        <Box
+          borderStyle="round"
+          borderColor={isSurcharge ? 'red' : theme.border}
+          backgroundColor={theme.body}
+          flexDirection="column"
+          paddingX={1}
+        >
+          <Box justifyContent="space-between">
+            {header}
+            {lamps}
+          </Box>
+          {meter}
+          {fuel}
+          {route}
         </Box>
-        {meter}
-        {fuel}
-        {route}
       </Box>
     )
   })

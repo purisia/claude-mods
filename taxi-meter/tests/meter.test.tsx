@@ -2,6 +2,13 @@ import { expect, test } from 'claude-code/testing'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false, isWorking: true, maxRows: 20 } } as const
 
+// 아래(엔진·다른 mod)가 그리는 띠 대신
+const BENEATH = ($: any, e: any) => {
+  const { Text } = $.ui.resolve(e)
+
+  return <Text>BENEATH</Text>
+}
+
 const USAGE = {
   startedAt: 0,
   context: { tokens: 850_000, window: 1_000_000, percent: 85 },
@@ -14,6 +21,7 @@ const USAGE = {
 
 test('모델·요금·환율·컨텍스트·연료가 미터기에 찍힌다', { options: { krwPerUsd: 1400 } }, async ($, on) => {
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('ui.render', BENEATH)
   on('session.usage', () => ({ value: USAGE }))
 
   for (const surface of ['terminal', 'desktop'] as const) {
@@ -33,6 +41,7 @@ test('모델·요금·환율·컨텍스트·연료가 미터기에 찍힌다', {
 
 test('Fable은 모범택시로 달린다', async ($, on) => {
   on('session.model', () => ({ value: 'claude-fable-5-1' }))
+  on('ui.render', BENEATH)
   on('session.usage', () => ({ value: { ...USAGE, rateLimits: [] } }))
 
   const ui = await $.ui.mount({ plugin: 'taxi-meter', surface: 'terminal', ...BAND })
@@ -63,6 +72,7 @@ test('/taxi off 하면 미터기가 사라지고 on 하면 돌아온다', async 
 
 test('행선지에 프로젝트와 브랜치가 찍힌다', async ($, on) => {
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('ui.render', BENEATH)
   on('session.usage', () => ({ value: USAGE }))
   on('session.repo', () => ({
     value: { root: 'D:\_code\O-MI-INFRA2-agi-cylim', remote: null, internal: false, name: null },
@@ -87,6 +97,7 @@ test('행선지에 프로젝트와 브랜치가 찍힌다', async ($, on) => {
 
 test('git 저장소 밖이면 프로젝트만 찍힌다', async ($, on) => {
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('ui.render', BENEATH)
   on('session.usage', () => ({ value: { ...USAGE, rateLimits: [] } }))
   on('session.repo', () => ({ value: null }))
   on('session.root', () => ({ value: '/home/me/notes/' }))
@@ -100,14 +111,30 @@ test('git 저장소 밖이면 프로젝트만 찍힌다', async ($, on) => {
 test('할증이면 테두리가 빨개지고 아니면 테마 색이다', async ($, on) => {
   let percent = 85
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('ui.render', BENEATH)
   on('session.usage', () => ({ value: { ...USAGE, context: { ...USAGE.context, percent } } }))
 
+  const border = async (ui: any) =>
+    (await ui.findAll({ type: 'Box' })).find((one: any) => one.props.borderStyle === 'round')?.props.borderColor
+
   let ui = await $.ui.mount({ plugin: 'taxi-meter', surface: 'terminal', ...BAND })
-  expect((await ui.find({ type: 'Box' }))?.props.borderColor).toBe('red')
+  expect(await border(ui)).toBe('red')
   await ui.unmount()
 
   percent = 50
   ui = await $.ui.mount({ plugin: 'taxi-meter', surface: 'terminal', ...BAND })
-  expect((await ui.find({ type: 'Box' }))?.props.borderColor).toBe('yellow')
+  expect(await border(ui)).toBe('yellow')
+  await ui.unmount()
+})
+
+test('같은 띠에 다른 mod가 그린 것은 미터기 위에 남는다', async ($, on) => {
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('ui.render', BENEATH)
+  on('session.usage', () => ({ value: USAGE }))
+
+  const ui = await $.ui.mount({ plugin: 'taxi-meter', surface: 'terminal', ...BAND })
+  const drawn: any = await ui.drawn()
+  expect(drawn.children[0]).toMatchObject({ type: 'Text', children: ['BENEATH'] })
+  expect(drawn.children[1]).toMatchObject({ type: 'Box', props: { borderStyle: 'round' } })
   await ui.unmount()
 })
