@@ -267,8 +267,8 @@ export const register: Register = (on, options) => {
       </Text>
     )
 
-    // 테두리 2줄 + 머리줄 + 요금줄 + 연료·행선지줄
-    const rows = 5
+    // 테두리 2줄 + 머리줄 + 요금줄 + 연료줄 + 행선지줄
+    const rows = 5 + (fuel ? 1 : 0)
     if (e.props.maxRows < rows) {
       return (
         <Box>
@@ -294,10 +294,8 @@ export const register: Register = (on, options) => {
           {lamps}
         </Box>
         {meter}
-        <Box justifyContent="space-between">
-          {fuel ?? route}
-          {fuel ? route : null}
-        </Box>
+        {fuel}
+        {route}
       </Box>
     )
   })
