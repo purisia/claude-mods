@@ -1,0 +1,9 @@
+{
+  "name": "project-tree",
+  "version": "0.1.0",
+  "description": "현재 프로젝트 폴더를 오른쪽 탭에 트리로 띄우고, 검색하고, md·html·그림은 연결된 프로그램으로, 폴더는 탐색기로 연다",
+  "author": {
+    "name": "purisia"
+  },
+  "types": "./types/index.d.ts"
+}

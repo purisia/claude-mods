@@ -14,6 +14,7 @@ purisia의 Claude Code mod 모음.
 | mod | 설명 |
 |---|---|
 | [taxi-meter](taxi-meter/) | 모델·컨텍스트 사용량·API 환산 요금(원화)·프로젝트·브랜치를 택시미터기처럼 프롬프트 위에 표시 |
+| [project-tree](project-tree/) | 프로젝트 폴더를 오른쪽 탭에 트리로 표시, 검색, md·html·그림은 연결 프로그램으로, 폴더는 탐색기로 열기 |
 
 ## mod 추가하기
 
