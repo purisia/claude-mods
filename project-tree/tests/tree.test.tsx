@@ -75,8 +75,9 @@ function linesOf(node: any): string[] {
   return children.map(text)
 }
 
+// 트리 줄: 맨 앞 거터(커서 ›) 1칸과 오른쪽 끝 빈 표시 칸은 떼고 본다
 async function lines(ui: any): Promise<string[]> {
-  return linesOf(await ui.drawn({ in: 'tree' }))
+  return linesOf(await ui.drawn({ in: 'tree' })).map(line => line.slice(1).trimEnd())
 }
 
 // 목록의 y줄 x칸을 마우스로 누르고 뗀다
@@ -91,7 +92,8 @@ test('세션이 시작되면 오른쪽 탭이 열리고, 목록에 폴더가 먼
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect((await ui.find({ type: 'Button', key: 'folder:' }))?.text).toMatch(/my-project/)
-  expect(await lines(ui)).toEqual(['▸ data/ 📂', '  📄 README.md', '  zz.json'])
+  // 폴더 이름 뒤에 폴더 열기 📂
+  expect(await lines(ui)).toEqual(['▸ data/ 📂', '  README.md', '  zz.json'])
   await ui.unmount()
 
   // 펼쳐져 있을 때 프롬프트 위 띠에는 손대지 않는다
@@ -140,11 +142,11 @@ test('끌다가 다른 줄에서 떼면 아무것도 누르지 않는다', async
   await ui.pointer({ type: 'down', x: 2, y: 0, button: 'left', in: 'tree' })
   await ui.pointer({ type: 'move', x: 4, y: 1, button: 'left', in: 'tree' })
   await ui.pointer({ type: 'up', x: 4, y: 1, button: 'left', in: 'tree' })
-  expect((await lines(ui))[0]).toBe('▸ data/ 📂')
+  expect((await lines(ui))[0]).toMatch(/^▸ data\//)
   await ui.unmount()
 })
 
-test('md·그림 파일을 누르면 목록 안에서 묻고, 열기를 누를 때만 연결된 프로그램으로 연다', async ($, on) => {
+test('파일을 누르면 목록 안에서 묻고, 열기를 누를 때만 연결된 프로그램으로 연다 (확장자 제한 없음)', async ($, on) => {
   const runs: string[][] = []
   on('process.run', (_: unknown, e: any) => (runs.push(e.argv), { value: { ...OK, exitCode: 1 } }))
   await start($, on)
@@ -152,9 +154,9 @@ test('md·그림 파일을 누르면 목록 안에서 묻고, 열기를 누를 �
 
   // 누르면 그 줄 아래에 묻는 줄이 생기고, 취소하면 사라진다
   await click(ui, 1)
-  expect((await lines(ui))[2]).toBe('    열까요? [ 열기 ]  [ 취소 ]')
-  // 들여쓰기 4 + '열까요? ' 8 = 12칸부터 '[ 열기 ]', 22칸부터 '[ 취소 ]'
-  await click(ui, 2, 23)
+  expect((await lines(ui))[2]).toBe('  └ 열까요?  [ 열기 ]  [ 취소 ]')
+  // 거터 1 + 들여쓰기 2 + '└ 열까요?  ' 11 = 14칸부터 '[ 열기 ]', 24칸부터 '[ 취소 ]'
+  await click(ui, 2, 25)
   expect((await lines(ui)).join('\n')).not.toMatch(/열까요/)
   expect(runs).toEqual([])
 
@@ -164,26 +166,28 @@ test('md·그림 파일을 누르면 목록 안에서 묻고, 열기를 누를 �
   expect((await lines(ui)).join('\n')).not.toMatch(/열까요/)
 
   await click(ui, 1)
-  await click(ui, 2, 13)
+  await click(ui, 2, 15)
   expect(runs).toEqual([['explorer.exe', `${ROOT}\\README.md`]])
   expect((await lines(ui)).join('\n')).not.toMatch(/열까요/)
 
-  // 그 밖의 파일 줄은 눌러도 아무것도 하지 않는다
+  // .json처럼 어떤 파일이든 묻고 연다
   await click(ui, 2)
-  expect((await lines(ui)).join('\n')).not.toMatch(/열까요/)
+  expect((await lines(ui))[3]).toMatch(/열까요/)
+  await click(ui, 3, 15)
+  expect(runs[1]).toEqual(['explorer.exe', `${ROOT}\\zz.json`])
   await ui.unmount()
 })
 
-test('키보드: ↓로 옮기고 Enter로 누르며, 묻는 줄이 뜨면 커서가 열기로 간다', async ($, on) => {
+test('마우스로만 쓴다: 키를 눌러도 아무것도 하지 않는다', async ($, on) => {
   const runs: string[][] = []
   on('process.run', (_: unknown, e: any) => (runs.push(e.argv), { value: { ...OK, exitCode: 1 } }))
   await start($, on)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await ui.key({ key: 'down', in: 'tree' })
-  await ui.key({ key: 'return', in: 'tree' })
-  expect((await lines(ui))[2]).toMatch(/열까요/)
-  await ui.key({ key: 'return', in: 'tree' })
-  expect(runs).toEqual([['explorer.exe', `${ROOT}\\README.md`]])
+  const before = await lines(ui)
+  await ui.key({ key: 'down', in: 'tree' }).catch(() => undefined)
+  await ui.key({ key: 'return', in: 'tree' }).catch(() => undefined)
+  expect(await lines(ui)).toEqual(before)
+  expect(runs).toEqual([])
   await ui.unmount()
 })
 
@@ -199,8 +203,8 @@ test('폴더 이름 옆 📂와 머리줄의 프로젝트 이름으로 탐색기
   await start($, on)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.press({ key: 'folder:' })
-  // '▸ data/' 7칸 + 띄운 1칸 뒤 8칸부터 📂
-  await click(ui, 0, 8)
+  // 거터 1 + '▸ data/' 7칸 = 8칸부터 ' 📂' 3칸
+  await click(ui, 0, 9)
   expect(runs).toEqual([
     ['powershell.exe', ROOT, ''],
     ['powershell.exe', `${ROOT}\\data`, ''],
@@ -222,11 +226,11 @@ test('Enter로 검색하면 프로젝트 전체에서 이름이 맞는 파일을
   expect(await ui.find({ type: 'Text', text: /맞는 파일이 없습니다/ })).toBeDefined()
 
   await ui.press({ key: 'clear' })
-  expect((await lines(ui))[0]).toBe('▸ data/ 📂')
+  expect((await lines(ui))[0]).toMatch(/^▸ data\//)
   await ui.unmount()
 })
 
-test('Claude가 새 파일을 만들면 그 폴더까지 펼치고, 탐색기에서 보기로 그 파일을 고른다', async ($, on) => {
+test('Claude가 새 파일을 만들면 그 폴더까지 펼쳐 +로 표시하고, 최근 작업에서 파일 열기·폴더 열기를 고른다', async ($, on) => {
   const runs: string[][] = []
   const made = `${ROOT}\\data\\new.csv`
   const data = FILES.data ?? []
@@ -239,7 +243,7 @@ test('Claude가 새 파일을 만들면 그 폴더까지 펼치고, 탐색기에
     return { result: {} }
   })
   on('process.run', (_: unknown, e: any) => {
-    runs.push([e.argv[0], e.init?.env?.REVEAL_FOLDER, e.init?.env?.REVEAL_NAME])
+    runs.push(e.argv[0] === 'powershell.exe' ? [e.argv[0], e.init?.env?.REVEAL_FOLDER, e.init?.env?.REVEAL_NAME] : e.argv)
 
     return { value: OK }
   })
@@ -247,15 +251,36 @@ test('Claude가 새 파일을 만들면 그 폴더까지 펼치고, 탐색기에
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
   await $.tool.call({ tool: 'Write', file_path: made, content: 'a,b' } as any)
-  expect(await lines(ui)).toContain('    new.csv ✨')
-  expect((await lines(ui))[0]).toBe('▾ data/ 📂')
-  expect((await ui.find({ type: 'Button', key: `reveal:${made}` }))?.text).toMatch(/data\/new\.csv/)
+  expect(await lines(ui)).toContain('    new.csv +')
+  expect((await lines(ui))[0]).toMatch(/^▾ data\//)
+  // 아래 목록도 Client 영역('made'): 0줄 제목, 1줄 파일, 펼치면 2줄에 파일 열기·폴더 열기
+  const made1 = async () => linesOf(await ui.drawn({ in: 'made' }))
+  const press = async (y: number, x = 2) => {
+    await ui.pointer({ type: 'down', x, y, button: 'left', in: 'made' })
+    await ui.pointer({ type: 'up', x, y, button: 'left', in: 'made' })
+  }
+  expect(await made1()).toEqual(['─ 최근 작업 ─ 비우기', '+ new.csv  data'])
 
-  await ui.press({ key: `reveal:${made}` })
+  // 누르면 고르는 줄이 펼쳐지고, 다시 누르면 닫힌다
+  await press(1)
+  expect((await made1())[2]).toBe('  └ [ 파일 열기 ]  [ 폴더 열기 ]')
+  await press(1)
+  expect(await made1()).toHaveLength(2)
+
+  // '  └ ' 4칸 + '[ 파일 열기 ]' 13칸 + 2칸 = 19칸부터 폴더 열기
+  await press(1)
+  await press(2, 20)
   expect(runs).toEqual([['powershell.exe', `${ROOT}\\data`, 'new.csv']])
+  expect(await made1()).toHaveLength(2)
 
-  await ui.press({ key: 'forget' })
-  expect(await ui.find({ type: 'Button', key: `reveal:${made}` })).toBeUndefined()
+  await press(1)
+  await press(2, 5)
+  expect(runs[1]).toEqual(['explorer.exe', made])
+
+  // 제목줄 오른쪽 끝 '비우기'
+  await ui.resize({ columns: 40, rows: 2, in: 'made' })
+  await press(0, 38)
+  expect(await ui.find({ type: 'Client', key: 'made' })).toBeUndefined()
   data.pop()
   await ui.unmount()
 })
@@ -280,36 +305,77 @@ test('Client가 없는 화면(VS Code)에서는 같은 목록을 버튼으로 �
   const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
   expect((await ui.find({ type: 'Button', key: 'dir:data' }))?.props.label).toBe('▸ data/')
   await ui.press({ key: 'dir:data' })
-  expect(await ui.find({ type: 'Text', text: /dates\.json/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'open:data/dates.json' })).toBeDefined()
   await ui.unmount()
 })
 
-test('설정에서 여는 파일의 확장자를 더하고 빼며, html은 기본으로 열린다', async ($, on) => {
+
+test('Claude가 고친 파일은 ~로, 최근 작업에도 올라간다 (만든 뒤 고친 파일은 +로 남고, 접힌 폴더엔 •)', async ($, on) => {
+  const readme = `${ROOT}/README.md`
+  const made = `${ROOT}/data/new.csv`
+  const data = FILES.data ?? []
+  const present = new Set([readme])
+  const norm = (path: string) => path.replace(/\\/g, '/')
+  on('fs.exists', (_: unknown, e: any) => ({ value: [...present].some(one => norm(one) === norm(e.path)) }))
+  on('tool.call', (_: unknown, e: any) => {
+    if (e.tool === 'Write') {
+      present.add(made)
+      data.push({ name: 'new.csv', kind: 'file' })
+    }
+
+    return { result: {} }
+  })
+  await start($, on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  await $.tool.call({ tool: 'Edit', file_path: readme, old_string: 'a', new_string: 'b' } as any)
+  expect(await lines(ui)).toContain('  README.md ~')
+  expect(linesOf(await ui.drawn({ in: 'made' }))[1]).toBe('~ README.md')
+
+  // 새로 만든 뒤 고쳐도 +
+  await $.tool.call({ tool: 'Write', file_path: made, content: 'a' } as any)
+  await $.tool.call({ tool: 'Edit', file_path: made, old_string: 'a', new_string: 'b' } as any)
+  expect(await lines(ui)).toContain('    new.csv +')
+
+  // data/를 접으면 안에 만든 파일이 있다는 • 가 붙는다
+  await click(ui, 0)
+  expect((await lines(ui))[0]).toBe('▸ data/ 📂 •')
+  data.pop()
+  await ui.unmount()
+})
+
+test('설정에서 남겨 둘 개수를 바꾸면 저장되고 넘치는 오래된 것은 빠진다', async ($, on) => {
   const stored: Record<string, unknown> = {}
   on('store.get', (_: unknown, e: any) => ({ value: stored[e.key] }))
   on('store.set', (_: unknown, e: any) => ((stored[e.key] = e.value), { value: undefined }))
-  FILES['']?.push({ name: 'index.html', kind: 'file' })
+  on('fs.exists', () => ({ value: true }))
+  on('tool.call', () => ({ result: {} }))
   await start($, on)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await lines(ui)).toContain('  🌐 index.html')
+  for (const name of ['a.txt', 'b.txt', 'c.txt']) {
+    await $.tool.call({ tool: 'Edit', file_path: `${ROOT}/${name}`, old_string: 'x', new_string: 'y' } as any)
+  }
+  expect(linesOf(await ui.drawn({ in: 'made' }))).toHaveLength(4)
 
   await ui.press({ key: 'settings' })
-  expect(await ui.find({ type: 'Button', key: 'ext:md' })).toBeDefined()
-  // json 추가, md 빼기
-  await ui.input({ key: 'ext-add-0', text: '.json, PDF', kind: 'submit' })
-  await ui.press({ key: 'ext:md' })
-  expect(stored.openExtensions).toContain('json')
-  expect(stored.openExtensions).toContain('pdf')
-  expect(stored.openExtensions).not.toContain('md')
+  expect(await ui.find({ type: 'Text', text: /^8개$/ })).toBeDefined()
+  await ui.press({ key: 'limit-up' })
+  expect(stored.recentLimit).toBe(9)
+  for (let i = 0; i < 7; i++) await ui.press({ key: 'limit-down' })
+  expect(stored.recentLimit).toBe(2)
+  await ui.press({ key: 'settings' })
+  // 최근 것 둘만 남는다
+  expect(linesOf(await ui.drawn({ in: 'made' }))).toEqual(['─ 최근 작업 ─ 비우기', '~ c.txt', '~ b.txt'])
+  await ui.unmount()
+})
 
-  await ui.press({ key: 'settings' })
-  expect(await lines(ui)).toContain('  📎 zz.json')
-  expect(await lines(ui)).toContain('  README.md')
+test('눌러도 커서·선택 표시(›)는 남지 않는다', async ($, on) => {
+  await start($, on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const gutters = async () => linesOf(await ui.drawn({ in: 'tree' })).map(line => line[0])
+  expect(await gutters()).not.toContain('›')
 
-  await ui.press({ key: 'settings' })
-  await ui.press({ key: 'ext-reset' })
-  await ui.press({ key: 'settings' })
-  expect(await lines(ui)).toContain('  📄 README.md')
-  FILES['']?.pop()
+  await click(ui, 0)
+  expect(await gutters()).not.toContain('›')
   await ui.unmount()
 })

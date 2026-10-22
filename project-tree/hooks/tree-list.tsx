@@ -4,20 +4,22 @@ import type { ListAct, ListProps, ListRow } from '../types'
 
 // 파일 목록을 Client 영역에 그린다. 이 영역에서는 마우스를 눌러 끌어도 화면이 글자를 고르지 않아
 // 클립보드로 복사되지 않는다. 대신 누르기·키 입력을 여기서 직접 받아 hooks 모듈에 post로 넘긴다
-type State = { cursor: number; hover: number | null; down: number | null; focus: string | null }
+type State = { hover: number | null; down: number | null }
 
-// 확인 줄의 버튼 자리 (글자 칸): '열까요? ' 8칸 뒤 '[ 열기 ]' 8칸, 2칸 띄고 '[ 취소 ]' 8칸
-const ASK = '열까요? '
+// 모양: 배경색 없이 글자색과 1칸 기호만 쓴다 (이모지는 터미널마다 폭이 달라 쓰지 않는다)
+// 줄 = 거터 1칸(커서 ›) + 들여쓰기 + 이름 … + 오른쪽 끝 표시 2칸(+ 만듦, ~ 고침, • 바뀐 것을 품은 접힌 폴더)
+const ASK = '└ 열까요?  '
 const OPEN = '[ 열기 ]'
 const CANCEL = '[ 취소 ]'
-const ASK_CELLS = 8
-const BUTTON_CELLS = 8
 const GAP = '  '
-// 폴더 이름 바로 뒤에 붙는 📂 (앞의 한 칸 포함)
+// 폴더 열기: 폴더 이름 바로 뒤 📂 (U+1F4C2, VS16 없이 늘 2칸). 평소엔 흐리게, 마우스를 올리면 또렷하게
 const FOLDER = ' 📂'
+const MARKS = { new: ' +', edit: ' ~' } as const
+const COLORS = { new: 'green', edit: 'yellow' } as const
 
+// 거터 1칸 + 깊이마다 2칸 + 파일·확인 줄은 폴더 기호 자리 2칸
 function indentOf(row: ListRow): string {
-  return '  '.repeat(row.depth) + (row.kind === 'dir' ? '' : row.kind === 'confirm' ? '    ' : '  ')
+  return ` ${'  '.repeat(row.depth)}${row.kind === 'dir' ? '' : '  '}`
 }
 
 // 터미널에서 글자가 차지하는 칸 수: 한글·한자·전각·이모지는 2칸, 결합 문자는 0칸
@@ -42,45 +44,39 @@ function cells(text: string): number {
   return width
 }
 
-function dirName(row: ListRow): string {
-  return `${row.isOpen ? '▾' : '▸'} ${row.label}/`
+function caretOf(row: ListRow): string {
+  return row.isOpen ? '▾ ' : '▸ '
 }
 
 // 한 줄에서 x칸을 누르면 무엇을 할지
 function actAt(row: ListRow, x: number): ListAct | null {
   if (row.kind === 'dir') {
-    // 이름 뒤 📂 (띄운 한 칸 빼고 2칸)을 누르면 탐색기, 나머지는 펼치기·접기
-    const start = cells(indentOf(row) + dirName(row)) + 1
-    const isFolder = x >= start && x < start + 2
+    // 이름 뒤 ' 📂' 3칸(앞 공백 포함)을 누르면 탐색기, 나머지는 펼치기·접기
+    const start = cells(indentOf(row) + caretOf(row) + row.label + '/')
+    const isFolder = x >= start && x < start + cells(FOLDER)
     return { act: isFolder ? 'folder' : 'toggle', path: row.id }
   }
   if (row.kind === 'file') return { act: 'ask', path: row.id }
   if (row.kind === 'confirm') {
-    const open = indentOf(row).length + ASK_CELLS
-    const cancel = open + BUTTON_CELLS + GAP.length
-    if (x >= open && x < open + BUTTON_CELLS) return { act: 'confirm', path: row.id }
-    if (x >= cancel && x < cancel + BUTTON_CELLS) return { act: 'cancel', path: row.id }
+    const open = cells(indentOf(row) + ASK)
+    const cancel = open + cells(OPEN + GAP)
+    if (x >= open && x < open + cells(OPEN)) return { act: 'confirm', path: row.id }
+    if (x >= cancel && x < cancel + cells(CANCEL)) return { act: 'cancel', path: row.id }
   }
 
   return null
 }
 
-// Enter로 누를 때: 확인 줄이면 열기, 나머지는 이름을 누른 것과 같다
-function actOnEnter(row: ListRow): ListAct | null {
-  if (row.kind === 'confirm') return { act: 'confirm', path: row.id }
-
-  return actAt(row, 0)
-}
-
+// 마우스로만 쓴다 (키보드 조작·커서는 두지 않는다)
 function listen(surface: ClientSurface<State>, props: () => ListProps) {
-  const now = (): State => surface.state ?? { cursor: 0, hover: null, down: null, focus: null }
+  const now = (): State => surface.state ?? { hover: null, down: null }
   const rowAt = (y: number) => (y >= 0 && y < props().rows.length ? y : null)
 
   surface.onPointer(event => {
     const state = now()
     const at = rowAt(event.y)
     if (event.type === 'down') {
-      surface.setState({ ...state, down: at, cursor: at ?? state.cursor })
+      surface.setState({ ...state, down: at })
     } else if (event.type === 'up') {
       // 누른 줄에서 뗐을 때만 누른 것으로 친다 (끌다가 다른 줄에서 떼면 아무것도 안 함)
       const row = at !== null && at === state.down ? props().rows[at] : undefined
@@ -93,83 +89,89 @@ function listen(surface: ClientSurface<State>, props: () => ListProps) {
       surface.setState({ ...state, hover: null })
     }
   })
-
-  surface.onKey(event => {
-    const state = now()
-    const { rows } = props()
-    if (rows.length === 0) return
-    const last = rows.length - 1
-    if (event.key === 'up') surface.setState({ ...state, cursor: Math.max(0, state.cursor - 1) })
-    else if (event.key === 'down') surface.setState({ ...state, cursor: Math.min(last, state.cursor + 1) })
-    else if (event.key === 'home') surface.setState({ ...state, cursor: 0 })
-    else if (event.key === 'end') surface.setState({ ...state, cursor: last })
-    else if (event.key === 'pageup') surface.setState({ ...state, cursor: Math.max(0, state.cursor - 10) })
-    else if (event.key === 'pagedown') surface.setState({ ...state, cursor: Math.min(last, state.cursor + 10) })
-    else {
-      const row = rows[Math.min(state.cursor, last)]
-      if (!row) return
-      if (event.key === 'return') {
-        const act = actOnEnter(row)
-        if (act) surface.post(act)
-      } else if (event.key === 'o' && row.kind === 'dir') {
-        surface.post({ act: 'folder', path: row.id })
-      }
-    }
-  })
 }
 
 const TreeList: ClientModule<ListProps, State> = (props, surface) => {
   const { Box, Text } = surface.elements
   let state = surface.state
   if (state === undefined) {
-    state = { cursor: 0, hover: null, down: null, focus: null }
+    state = { hover: null, down: null }
     surface.setState(state)
     // 리스너는 한 번만 단다. 최신 props는 마지막으로 받은 것을 읽는다
     listen(surface, () => latest)
   }
   latest = props
 
-  // hooks가 커서를 옮겨 달라고 한 줄이 새로 생기면 (확인 줄) 그리로 간다
-  if (props.focus !== state.focus) {
-    const at = props.rows.findIndex(row => row.id === props.focus && row.kind === 'confirm')
-    state = { ...state, focus: props.focus, cursor: at >= 0 ? at : state.cursor }
-    surface.setState(state)
-  }
-  const cursor = Math.min(state.cursor, Math.max(0, props.rows.length - 1))
-
   return (
     <Box flexDirection="column">
       {props.rows.map((row, i) => {
-        const isCursor = i === cursor
         const isHover = i === state?.hover
-        const indent = indentOf(row)
+        // 거터 1칸은 비워 둔다 (커서·선택 표시는 그리지 않는다. 클릭 위치 계산은 이 칸을 센다)
+        const gutter = <Text> </Text>
+        const indent = indentOf(row).slice(1)
+
         if (row.kind === 'confirm') {
           return (
-            <Text>
-              <Text color="yellow">{`${indent}${ASK}`}</Text>
-              <Text color="green" bold inverse={isCursor}>
+            <Text wrap="truncate-end">
+              {gutter}
+              <Text>{indent}</Text>
+              <Text dimColor>└ </Text>
+              <Text>{ASK.slice(2)}</Text>
+              <Text color="green" bold>
                 {OPEN}
               </Text>
               <Text>{GAP}</Text>
-              <Text dimColor>{CANCEL}</Text>
+              <Text>{CANCEL}</Text>
             </Text>
           )
         }
-        if (row.kind === 'note') return <Text dimColor>{`${indent}${row.label}`}</Text>
-
-        const name = row.kind === 'dir' ? dirName(row) : `${row.label}${row.isNew ? ' ✨' : ''}`
-        return (
-          <Text wrap="truncate-end">
-            <Text
-              inverse={isCursor}
-              underline={isHover && !isCursor}
-              color={row.isNew ? 'yellow' : row.kind === 'dir' ? 'cyan' : undefined}
-              dimColor={row.kind === 'plain' && !row.isNew}
-            >
-              {`${indent}${name}`}
+        if (row.kind === 'note') {
+          return (
+            <Text wrap="truncate-end">
+              {gutter}
+              <Text dimColor italic>{`${indent}${row.label}`}</Text>
             </Text>
-            {row.kind === 'dir' ? <Text dimColor={!isHover}>{FOLDER}</Text> : null}
+          )
+        }
+
+        // 오른쪽 끝 2칸: 파일은 + / ~, 접힌 폴더는 안에 손댄 파일이 있다는 •
+        const mark = row.mark ? (
+          <Text color={COLORS[row.mark]} bold>
+            {row.kind === 'dir' ? ' •' : MARKS[row.mark]}
           </Text>
+        ) : (
+          <Text>{'  '}</Text>
+        )
+
+        if (row.kind === 'dir') {
+          return (
+            <Box width="100%">
+              <Box flexGrow={1} flexShrink={1}>
+                <Text wrap="truncate-end">
+                  {gutter}
+                  <Text>{indent}</Text>
+                  <Text dimColor>{caretOf(row)}</Text>
+                  <Text color="cyan">{`${row.label}/`}</Text>
+                  <Text dimColor={!isHover}>{FOLDER}</Text>
+                </Text>
+              </Box>
+              {mark}
+            </Box>
+          )
+        }
+
+        // 만든 파일은 green, 고친 파일은 yellow, 나머지는 기본색
+        return (
+          <Box width="100%">
+            <Box flexGrow={1} flexShrink={1}>
+              <Text wrap="truncate-end">
+                {gutter}
+                <Text>{indent}</Text>
+                <Text color={row.mark ? COLORS[row.mark] : undefined}>{row.label}</Text>
+              </Text>
+            </Box>
+            {mark}
+          </Box>
         )
       })}
     </Box>
@@ -177,6 +179,6 @@ const TreeList: ClientModule<ListProps, State> = (props, surface) => {
 }
 
 // 리스너가 읽는 마지막 props (모듈은 인스턴스 하나만 그린다)
-let latest: ListProps = { rows: [], focus: null }
+let latest: ListProps = { rows: [] }
 
 export default TreeList

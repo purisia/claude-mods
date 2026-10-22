@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
-import type { Entry, ListAct, ListProps, ListRow } from '../types'
+import type { Entry, ListAct, ListProps, ListRow, MadeAct, MadeItem, MadeProps, TouchKind, Touched } from '../types'
 
 const PANE = 'project-tree'
 // 오른쪽 탭의 폭 (터미널 폭의 45%까지만 열린다)
@@ -22,10 +22,17 @@ const index = atom({ plugin: 'project-tree', key: 'index' } as const, null)
 const recent = atom({ plugin: 'project-tree', key: 'recent' } as const, [])
 // 열기 전에 탭 안에서 묻고 있는 파일 (잘못 누를 수 있어서)
 const pending = atom({ plugin: 'project-tree', key: 'pending' } as const, null)
-const extensions = atom({ plugin: 'project-tree', key: 'extensions' } as const, [])
 const isSettings = atom({ plugin: 'project-tree', key: 'isSettings' } as const, false)
-// 방금 만든 파일 목록에 남겨 둘 개수
-const RECENT_LIMIT = 5
+// 최근 작업 파일 중 파일 보기·폴더 보기를 펼쳐 둔 것
+const choosing = atom({ plugin: 'project-tree', key: 'choosing' } as const, null)
+// 최근 작업 파일 목록에 남겨 둘 개수 (설정 화면에서 바꾼다, 세션을 넘어 $.store에 둔다)
+const DEFAULT_RECENT_LIMIT = 8
+const MIN_RECENT_LIMIT = 1
+const MAX_RECENT_LIMIT = 30
+const RECENT_LIMIT_KEY = 'recentLimit'
+const recentLimit = atom({ plugin: 'project-tree', key: 'recentLimit' } as const, DEFAULT_RECENT_LIMIT)
+// 만든 파일은 +, 고친 파일은 ~ (diff의 추가·변경 표기)
+const MARKS: Record<TouchKind, string> = { new: '+', edit: '~' }
 
 // 탐색기 열기가 왜 안 됐는지 남기는 줄: claude --debug 로그에만 쓴다
 async function note($: EngineInterface, line: string) {
@@ -44,46 +51,21 @@ function join(parent: string, name: string): string {
   return parent ? `${parent}/${name}` : name
 }
 
-// 누르면 연결된 프로그램으로 여는 파일의 확장자 (설정 화면에서 바꾼다, 세션을 넘어 $.store에 둔다)
-const DEFAULT_EXTENSIONS = ['md', 'markdown', 'html', 'htm', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico']
-const EXTENSIONS_KEY = 'openExtensions'
-const IMAGES = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'])
-
-function extensionOf(name: string): string {
-  const match = /\.([^./\\]+)$/.exec(name)
-
-  return match?.[1]?.toLowerCase() ?? ''
+function clampLimit(value: number): number {
+  return Math.max(MIN_RECENT_LIMIT, Math.min(MAX_RECENT_LIMIT, Math.round(value)))
 }
 
-// 여는 파일이면 그 종류의 아이콘, 아니면 null
-function iconOf(name: string, extensions: readonly string[]): string | null {
-  const ext = extensionOf(name)
-  if (!ext || !extensions.includes(ext)) return null
-  if (ext === 'md' || ext === 'markdown') return '📄'
-  if (ext === 'html' || ext === 'htm') return '🌐'
-  if (IMAGES.has(ext)) return '🖼'
-
-  return '📎'
+async function loadRecentLimit($: EngineInterface) {
+  const stored = await $.store.get(RECENT_LIMIT_KEY).catch(() => undefined)
+  await update($, recentLimit, () => (typeof stored === 'number' ? clampLimit(stored) : DEFAULT_RECENT_LIMIT))
 }
 
-// 'pdf, .txt  xlsx' → ['pdf', 'txt', 'xlsx']
-function parseExtensions(text: string): string[] {
-  return text
-    .split(/[\s,;]+/)
-    .map(one => one.replace(/^\*?\./, '').toLowerCase())
-    .filter(one => /^[a-z0-9_+-]{1,16}$/.test(one))
-}
-
-async function loadExtensions($: EngineInterface) {
-  const stored = await $.store.get(EXTENSIONS_KEY).catch(() => undefined)
-  const list = Array.isArray(stored) ? stored.filter((one): one is string => typeof one === 'string') : DEFAULT_EXTENSIONS
-  await update($, extensions, () => list)
-}
-
-async function saveExtensions($: EngineInterface, list: string[]) {
-  const unique = [...new Set(list)]
-  await update($, extensions, () => unique)
-  await $.store.set(EXTENSIONS_KEY, unique).catch(() => undefined)
+// 개수를 바꾸면 넘치는 오래된 것은 바로 버린다
+async function saveRecentLimit($: EngineInterface, value: number) {
+  const limit = clampLimit(value)
+  await update($, recentLimit, () => limit)
+  await update($, recent, list => list.slice(0, limit))
+  await $.store.set(RECENT_LIMIT_KEY, limit).catch(() => undefined)
 }
 
 // 경로는 프로젝트 루트 기준으로 들고 다니고, 읽을 때만 루트를 붙인다
@@ -165,8 +147,9 @@ async function toggle($: EngineInterface, path: string) {
 }
 
 // OS에 연결된 기본 프로그램으로 연다 (윈도우 explorer, 맥 open, 리눅스 xdg-open)
+// path는 프로젝트 루트 기준 경로이거나, 방금 만든 파일처럼 이미 절대 경로다
 async function openWithDefault($: EngineInterface, path: string) {
-  const full = await absolute($, path)
+  const full = /^([A-Za-z]:[\\/]|\/)/.test(path) ? path : await absolute($, path)
   const isWindows = /^[A-Za-z]:[\\/]/.test(full)
   const commands = isWindows ? [['explorer.exe', full.replace(/\//g, '\\')]] : [['open', full], ['xdg-open', full]]
 
@@ -360,9 +343,28 @@ async function runFirst($: EngineInterface, commands: string[][], isWindows: boo
   $.ui.toast(failure)
 }
 
-// Claude가 만든 파일을 목록에 올리고, 트리에서 그 폴더까지 펼쳐 그 줄로 스크롤한다
-async function reveal($: EngineInterface, full: string) {
-  await update($, recent, list => [full, ...list.filter(one => one !== full)].slice(0, RECENT_LIMIT))
+// 0.1.0은 경로 문자열만 담았다: 세션 상태에 남은 그 모양도 '만든 파일'로 읽는다
+function touchedList(stored: readonly unknown[]): Touched[] {
+  return stored.flatMap(one =>
+    typeof one === 'string'
+      ? [{ path: one, kind: 'new' as const }]
+      : one && typeof one === 'object' && typeof (one as Touched).path === 'string'
+        ? [{ path: (one as Touched).path, kind: (one as Touched).kind === 'edit' ? ('edit' as const) : ('new' as const) }]
+        : [],
+  )
+}
+
+// Claude가 만들거나 고친 파일을 목록에 올리고, 트리에서 그 폴더까지 펼친다.
+// 만든 뒤에 고친 파일은 '만든 파일'로 남긴다
+async function reveal($: EngineInterface, full: string, kind: TouchKind) {
+  const limit = await read($, recentLimit)
+  await update($, recent, stored => {
+    const list = touchedList(stored)
+    const before = list.find(one => one.path === full)
+    const touched: Touched = { path: full, kind: before?.kind === 'new' ? 'new' : kind }
+
+    return [touched, ...list.filter(one => one.path !== full)].slice(0, limit)
+  })
   const rel = relativeTo(await absolute($, ''), full)
   if (!rel) return
 
@@ -388,8 +390,24 @@ async function listAct($: EngineInterface, { act, path }: ListAct) {
   } else if (act === 'folder') await openFolder($, await absolute($, path))
 }
 
+// '최근 작업 파일'에서 누른 것을 처리한다 (made-list.tsx의 post, 또는 Client가 없는 화면의 버튼)
+async function madeAct($: EngineInterface, request: MadeAct) {
+  if (request.act === 'forget') {
+    await update($, recent, () => [])
+    return
+  }
+  const { act, path } = request
+  if (act === 'pick') {
+    await update($, choosing, value => (value === path ? null : path))
+    return
+  }
+  await update($, choosing, () => null)
+  if (act === 'file') await openWithDefault($, path)
+  else await revealInExplorer($, path)
+}
+
 function openTab($: EngineInterface) {
-  return $.ui.open({ id: PANE, title: '📁 프로젝트', columns: COLUMNS })
+  return $.ui.open({ id: PANE, title: '프로젝트', columns: COLUMNS })
 }
 
 // 탭을 접으면 닫고, 프롬프트 위에 다시 펼칠 버튼만 남긴다
@@ -409,7 +427,7 @@ export const register: Register = on => {
       name: 'tree',
       description: '오른쪽 프로젝트 탭 접기·펼치기',
     })
-    await loadExtensions($)
+    await loadRecentLimit($)
     await refresh($)
     if (!(await read($, isFolded))) void openTab($)
     if (/^[A-Za-z]:[\\/]/.test(await absolute($, '').catch(() => ''))) startRevealServer($)
@@ -449,7 +467,26 @@ export const register: Register = on => {
     const path = String(e.file_path ?? '')
     const existed = path ? await $.fs.exists(path).catch(() => true) : true
     const done = await next(e)
-    if (!existed && (await $.fs.exists(path).catch(() => false))) await reveal($, path)
+    if (path && !done.isError && (await $.fs.exists(path).catch(() => false))) {
+      await reveal($, path, existed ? 'edit' : 'new')
+    }
+
+    return done
+  })
+
+  // 있던 파일을 Edit·NotebookEdit로 고친 것도 '고친 파일'로 보여 준다
+  on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
+    const done = await next(e)
+    const path = String(e.file_path ?? '')
+    if (path && !done.isError) await reveal($, path, 'edit')
+
+    return done
+  })
+
+  on('tool.call', { tool: 'NotebookEdit' }, async ($, e, next) => {
+    const done = await next(e)
+    const path = String(e.notebook_path ?? '')
+    if (path && !done.isError) await reveal($, path, 'edit')
 
     return done
   })
@@ -469,6 +506,17 @@ export const register: Register = on => {
     return {}
   })
 
+  // '최근 작업 파일' 영역(made-list.tsx)이 보낸 누르기
+  on('ui.message', { element: 'made' }, async ($, e) => {
+    const data = e.data as Partial<{ act: string; path: string }> | null
+    if (data?.act === 'forget') await madeAct($, { act: 'forget' })
+    else if ((data?.act === 'pick' || data?.act === 'file' || data?.act === 'folder') && typeof data.path === 'string') {
+      await madeAct($, { act: data.act, path: data.path })
+    }
+
+    return {}
+  })
+
   // 접혀 있을 때만 프롬프트 위 오른쪽 끝에 펼치기 버튼을 둔다
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || !(await read($, isFolded))) return next(e)
@@ -480,7 +528,7 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         <Box justifyContent="flex-end">
-          <Button key="unfold" label={`📁 ${root} ◂ 펼치기`} plain onPress={() => fold($, false)} />
+          <Button key="unfold" label={`« ${root}`} plain onPress={() => fold($, false)} />
         </Box>
         {below}
       </Box>
@@ -495,88 +543,104 @@ export const register: Register = on => {
     const all = await read($, listings)
     const text = await read($, query)
     const asking = await read($, pending)
-    const made = await read($, recent)
-    const openable = await read($, extensions)
+    const made = touchedList(await read($, recent))
+    const picking = await read($, choosing)
     const rootPath = await absolute($, '')
 
-    // 맨 위 줄: 설정, 접기 (배경색 칩)
-    const topBar = (inSettings: boolean) => (
-      <Box justifyContent="flex-end" gap={1}>
-        <Button
-          key="settings"
-          label={inSettings ? '돌아가기' : '설정'}
-          plain
-          onPress={() => update($, isSettings, value => !value)}
-        >
-          <Text backgroundColor={inSettings ? 'cyan' : 'gray'} color={inSettings ? 'black' : 'white'}>
-            {inSettings ? ' ← 돌아가기 ' : ' ⚙ 설정 '}
-          </Text>
-        </Button>
-        <Button key="fold" label="접기" plain onPress={() => fold($, true)}>
-          <Text backgroundColor="blue" color="white">
-            {' ⇥ 접기 '}
-          </Text>
-        </Button>
+    // 모양: 배경색 칩·이모지 없이 글자색과 1칸 기호만. 강조는 cyan, 만듦 green, 고침 yellow
+    // 섹션 제목은 이름표 붙은 가로줄: '─ 제목 ──────'
+    const rule = (title: string, right: RenderChildren = null) => (
+      <Box>
+        <Text dimColor>─ </Text>
+        <Text bold>{title} </Text>
+        <Box flexGrow={1} height={1} overflow="hidden">
+          <Text dimColor>{'─'.repeat(200)}</Text>
+        </Box>
+        {right}
       </Box>
     )
 
-    // 설정 화면: 누르면 여는 파일의 확장자를 고른다
+    // 설정 화면: 최근 작업에 남겨 둘 개수를 고른다
     if (await read($, isSettings)) {
-      const added = `ext-add-${await read($, resets)}`
+      const limit = await read($, recentLimit)
       return (
         <Box flexDirection="column">
-          {topBar(true)}
-          <Text bold>⚙ 누르면 연결된 프로그램으로 여는 파일</Text>
-          <Text dimColor>확장자를 누르면 목록에서 빠집니다.</Text>
-          <Box flexWrap="wrap" columnGap={1} marginY={1}>
-            {openable.length === 0 ? <Text dimColor>(없음: 어떤 파일도 열지 않습니다)</Text> : null}
-            {openable.map(ext => (
-              <Button
-                key={`ext:${ext}`}
-                label={`${iconOf(`x.${ext}`, [ext])} .${ext} ✕`}
-                plain
-                onPress={() => saveExtensions($, openable.filter(one => one !== ext))}
-              />
-            ))}
+          <Box justifyContent="space-between">
+            <Text bold>설정</Text>
+            <Button key="settings" label="← 돌아가기" plain onPress={() => update($, isSettings, () => false)}>
+              <Text color="cyan">← 돌아가기</Text>
+            </Button>
           </Box>
-          {'Input' in elements ? (
-            <elements.Input
-              key={added}
-              label="➕ "
-              placeholder="추가할 확장자 (예: pdf, txt) 후 Enter"
-              submitLabel="추가"
-              autoFocus
-              onSubmit={async value => {
-                await saveExtensions($, [...openable, ...parseExtensions(value)])
-                // 빈 필드로 새로 그리고 포커스를 돌려준다
-                await update($, resets, n => n + 1)
-                await $.ui.focus({ requestId: e.requestId, key: `ext-add-${await read($, resets)}` }).catch(() => undefined)
-              }}
-            />
-          ) : null}
-          <Box marginTop={1}>
-            <Button key="ext-reset" label="기본값으로 되돌리기" plain dimColor onPress={() => saveExtensions($, DEFAULT_EXTENSIONS)} />
+
+          <Box marginTop={1}>{rule('최근 작업 개수')}</Box>
+          <Box justifyContent="space-between">
+            <Box gap={2}>
+              <Button key="limit-down" label="−" dimColor={limit <= MIN_RECENT_LIMIT} onPress={() => saveRecentLimit($, limit - 1)} />
+              <Text bold>{`${limit}개`}</Text>
+              <Button key="limit-up" label="+" dimColor={limit >= MAX_RECENT_LIMIT} onPress={() => saveRecentLimit($, limit + 1)} />
+            </Box>
+            <Text dimColor>{`${MIN_RECENT_LIMIT}~${MAX_RECENT_LIMIT} · 기본 ${DEFAULT_RECENT_LIMIT}`}</Text>
           </Box>
         </Box>
       )
     }
-    const fresh = new Set(made.map(one => relativeTo(rootPath, one)).filter(Boolean))
-    const isNew = (path: string) => fresh.has(path)
+    // 트리에서 표시할 손댄 파일: 프로젝트 루트 기준 경로 → 만듦/고침
+    const touched = new Map(made.map(one => [relativeTo(rootPath, one.path), one.kind] as const).filter(([rel]) => rel))
+    const markOf = (path: string) => touched.get(path)
+    const dirMarkOf = (dir: string): TouchKind | undefined => {
+      let found: TouchKind | undefined
+      for (const [rel, kind] of touched) {
+        if (!rel.startsWith(`${dir}/`)) continue
+        if (kind === 'new') return 'new'
+        found = 'edit'
+      }
 
-    // Claude가 방금 만든 파일: 📂로 탐색기에서 그 파일을 고른 채 연다
+      return found
+    }
+
+    // 드래그해도 복사되지 않도록 목록은 Client 영역에 그린다 (Client가 있는 화면에서만)
+    const hasClient = 'Client' in elements && (e.surface === 'terminal' || e.surface === 'desktop')
+
+    // Claude가 방금 만들거나 고친 파일: 누르면 바로 아래에 파일 보기·폴더 보기를 펼치고, 다시 누르면 닫는다
+    // 이름은 앞에, 폴더는 뒤에: 경로가 길어도 파일 이름과 표시가 잘리지 않게
+    const items: MadeItem[] = made.map(one => {
+      const rel = relativeTo(rootPath, one.path)
+      const parts = (rel || one.path).split(/[\\/]/).filter(Boolean)
+      const name = parts.pop() ?? one.path
+      const dir = rel ? parts.join('/') : `${parts.length > 2 ? '…/' : ''}${parts.slice(-2).join('/')}`
+
+      return { path: one.path, kind: one.kind, name, dir }
+    })
     const madeBox =
-      made.length === 0 ? null : (
+      made.length === 0 ? null : hasClient ? (
+        <Box marginTop={1}>
+          <elements.Client
+            key="made"
+            module="./made-list.tsx"
+            width="100%"
+            props={{ items, picking } satisfies MadeProps}
+          />
+        </Box>
+      ) : (
         <Box flexDirection="column" marginTop={1}>
-          <Box justifyContent="space-between">
-            <Text color="yellow" bold>
-              ✨ 방금 만든 파일
-            </Text>
-            <Button key="forget" label="비우기" plain dimColor onPress={() => update($, recent, () => [])} />
-          </Box>
-          {made.map(one => (
-            <Button key={`reveal:${one}`} plain onPress={() => revealInExplorer($, one)}>
-              📂 {relativeTo(rootPath, one) || one} <Text dimColor>탐색기에서 보기</Text>
-            </Button>
+          {rule('최근 작업', <Button key="forget" label=" 비우기" plain dimColor onPress={() => madeAct($, { act: 'forget' })} />)}
+          {items.map(one => (
+            <Box key={`made:${one.path}`} flexDirection="column">
+              <Button key={`reveal:${one.path}`} label={one.name} plain onPress={() => madeAct($, { act: 'pick', path: one.path })}>
+                <Text color={one.kind === 'new' ? 'green' : 'yellow'} bold>
+                  {MARKS[one.kind]}
+                </Text>{' '}
+                {one.name}
+                <Text dimColor>{one.dir ? `  ${one.dir}` : ''}</Text>
+              </Button>
+              {picking === one.path ? (
+                <Box gap={2}>
+                  <Text dimColor>{'  └'}</Text>
+                  <Button key="made-open-file" label="파일 열기" variant="primary" onPress={() => madeAct($, { act: 'file', path: one.path })} />
+                  <Button key="made-open-folder" label="폴더 열기" onPress={() => madeAct($, { act: 'folder', path: one.path })} />
+                </Box>
+              ) : null}
+            </Box>
           ))}
         </Box>
       )
@@ -584,10 +648,12 @@ export const register: Register = on => {
     // 목록은 줄 데이터로 만들어 Client 영역(tree-list.tsx)에 넘긴다
     const rows: ListRow[] = []
     const file = (path: string, label: string, depth: number) => {
-      const icon = iconOf(path, openable)
-      rows.push({ id: path, kind: icon ? 'file' : 'plain', depth, label: icon ? `${icon} ${label}` : label, isNew: isNew(path) })
+      // Client props에는 undefined를 담을 수 없어 표시가 있을 때만 mark를 넣는다
+      const mark = markOf(path)
+      // 어떤 파일이든 누르면 연다 (열기 전에 묻는다)
+      rows.push({ id: path, kind: 'file', depth, label, ...(mark ? { mark } : {}) })
       // 누른 파일 줄 바로 아래에 열지 묻는 줄을 끼운다
-      if (icon && asking === path) rows.push({ id: path, kind: 'confirm', depth, label: '' })
+      if (asking === path) rows.push({ id: path, kind: 'confirm', depth, label: '' })
     }
     // 펼친 폴더를 따라 내려가며 한 줄씩 늘어놓는다
     const walk = (path: string, depth: number) => {
@@ -596,7 +662,9 @@ export const register: Register = on => {
         const child = join(path, one.name)
         if (one.isDir) {
           const isOpen = paths.includes(child)
-          rows.push({ id: child, kind: 'dir', depth, label: one.name, isOpen })
+          // 접힌 폴더 안에 Claude가 손댄 파일이 있으면 오른쪽 끝에 • (만든 게 있으면 만듦 색)
+          const inside = isOpen ? undefined : dirMarkOf(child)
+          rows.push({ id: child, kind: 'dir', depth, label: one.name, isOpen, ...(inside ? { mark: inside } : {}) })
           if (isOpen) walk(child, depth + 1)
         } else {
           file(child, one.name, depth)
@@ -623,6 +691,11 @@ export const register: Register = on => {
     // Client가 없는 화면(VS Code·모바일)에서는 같은 줄을 버튼으로 그린다
     const fallback = (row: ListRow) => {
       const indent = '  '.repeat(row.depth)
+      const mark = row.mark ? (
+        <Text color={row.mark === 'new' ? 'green' : 'yellow'} bold>
+          {row.kind === 'dir' ? ' •' : ` ${MARKS[row.mark]}`}
+        </Text>
+      ) : null
       if (row.kind === 'dir') {
         return (
           <Box key={`row:${row.id}`}>
@@ -633,33 +706,46 @@ export const register: Register = on => {
               onPress={() => listAct($, { act: 'toggle', path: row.id })}
             />
             <Button key={`folder:${row.id}`} label=" 📂" plain dimColor onPress={() => listAct($, { act: 'folder', path: row.id })} />
+            {mark}
           </Box>
         )
       }
       if (row.kind === 'file') {
-        return <Button key={`open:${row.id}`} label={`${indent}  ${row.label}`} plain onPress={() => listAct($, { act: 'ask', path: row.id })} />
+        return (
+          <Box key={`row:${row.id}`}>
+            <Button key={`open:${row.id}`} label={`${indent}  ${row.label}`} plain onPress={() => listAct($, { act: 'ask', path: row.id })} />
+            {mark}
+          </Box>
+        )
       }
       if (row.kind === 'confirm') {
         return (
-          <Box key={`confirm:${row.id}`} gap={1}>
-            <Text color="yellow">{`${indent}    열까요?`}</Text>
+          <Box key={`confirm:${row.id}`} gap={2}>
+            <Text>
+              <Text dimColor>{`${indent}  └ `}</Text>열까요?
+            </Text>
             <Button key="confirm-open" label="열기" variant="primary" onPress={() => listAct($, { act: 'confirm', path: row.id })} />
             <Button key="confirm-cancel" label="취소" onPress={() => listAct($, { act: 'cancel', path: row.id })} />
           </Box>
         )
       }
 
-      return <Text dimColor={row.kind === 'note'}>{`${indent}  ${row.label}`}</Text>
+      return (
+        <Text dimColor italic={row.kind === 'note'}>
+          {`${indent}  ${row.label}`}
+          {mark}
+        </Text>
+      )
     }
     const list =
       rows.length === 0 ? (
         <Text dimColor>{text ? '맞는 파일이 없습니다.' : '비어 있습니다.'}</Text>
-      ) : 'Client' in elements && (e.surface === 'terminal' || e.surface === 'desktop') ? (
+      ) : hasClient ? (
         <elements.Client
           key="tree"
           module="./tree-list.tsx"
           width="100%"
-          props={{ rows, focus: asking } satisfies ListProps}
+          props={{ rows } satisfies ListProps}
         />
       ) : (
         rows.map(fallback)
@@ -675,11 +761,11 @@ export const register: Register = on => {
     }
     const searchBox =
       'Input' in elements ? (
-        <Box key="search-row" gap={1}>
+        <Box key="search-row" justifyContent="space-between">
           <elements.Input
             key={field}
-            label="🔍 "
-            placeholder="파일 이름 검색 → Enter"
+            label="/ "
+            placeholder="파일 이름 검색 · Enter"
             submitLabel="검색"
             autoFocus
             onSubmit={async value => {
@@ -687,18 +773,26 @@ export const register: Register = on => {
               await $.ui.focus({ requestId: e.requestId, key: field }).catch(() => undefined)
             }}
           />
-          <Button key="clear" label="✕" plain dimColor={!text} onPress={clear} />
+          <Button key="clear" label="×" plain dimColor={!text} onPress={clear} />
         </Box>
       ) : null
 
-    // 맨 위에 설정·접기, 그 아래 프로젝트 이름·검색칸·트리, 맨 밑에 방금 만든 파일
+    // 머리줄 한 줄(왼쪽 프로젝트 📂, 오른쪽 설정·접기), 그 아래 검색칸·트리, 맨 밑에 최근 작업
     // (목록은 저절로 다시 읽으므로 새로고침 버튼은 두지 않는다)
     return (
       <Box flexDirection="column">
-        {topBar(false)}
-        <Button key="folder:" plain onPress={() => openFolder($, rootPath)}>
-          <Text bold>📁 {root}</Text> 📂
-        </Button>
+        <Box justifyContent="space-between">
+          <Box flexShrink={1}>
+            <Button key="folder:" label={`${root} 📂`} plain onPress={() => openFolder($, rootPath)}>
+              <Text bold>{root}</Text>
+              <Text dimColor> 📂</Text>
+            </Button>
+          </Box>
+          <Box gap={2} flexShrink={0} marginLeft={2}>
+            <Button key="settings" label="설정" plain onPress={() => update($, isSettings, () => true)} />
+            <Button key="fold" label="접기 »" plain onPress={() => fold($, true)} />
+          </Box>
+        </Box>
         {searchBox}
         {list}
         {madeBox}
