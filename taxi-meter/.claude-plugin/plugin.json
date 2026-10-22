@@ -1,7 +1,7 @@
 {
   "name": "taxi-meter",
-  "version": "0.1.0",
-  "description": "현재 모델·컨텍스트 사용량·API 환산 요금을 한국 택시미터기처럼 프롬프트 위에 띄운다",
+  "version": "0.2.0",
+  "description": "현재 모델·컨텍스트 사용량·API 환산 요금과 행선지(프로젝트·브랜치)를 한국 택시미터기처럼 프롬프트 위에 띄운다",
   "author": {
     "name": "purisia"
   },

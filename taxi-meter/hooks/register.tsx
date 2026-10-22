@@ -60,10 +60,41 @@ function bump($: StateDollar) {
   return update($, tick, n => n + 1)
 }
 
+// 행선지 = 프로젝트(저장소 루트 폴더명), 노선 = 브랜치
+type Place = { project: string; branch: string | null }
+
+function baseName(path: string): string {
+  return path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path
+}
+
+async function git($: StateDollar, args: string[]): Promise<string> {
+  try {
+    const { exitCode, stdout } = await $.process.run(['git', ...args], { timeoutMs: 3000 })
+
+    return exitCode === 0 ? stdout.trim() : ''
+  } catch {
+    return ''
+  }
+}
+
+async function loadPlace($: StateDollar): Promise<Place> {
+  const repo = await $.session.repo().catch(() => null)
+  const project = baseName(repo?.root ?? (await $.session.root().catch(() => '')))
+  if (!repo) return { project, branch: null }
+
+  // 브랜치가 없으면(detached HEAD) 짧은 커밋 해시
+  const branch = (await git($, ['branch', '--show-current'])) || (await git($, ['rev-parse', '--short', 'HEAD']))
+
+  return { project, branch: branch || null }
+}
+
 export const register: Register = (on, options) => {
   const rate = Number(options.krwPerUsd) > 0 ? Number(options.krwPerUsd) : DEFAULT_RATE
+  // 그릴 때마다 git을 돌리지 않도록 세션 시작·턴 끝에서만 새로 읽는다
+  let place: Place | undefined
 
   on('session.start', async ($, e, next) => {
+    place = await loadPlace($)
     await $.command.register({
       name: 'taxi',
       description: '택시미터 켜기·끄기 (/taxi on, /taxi off, 그냥 /taxi 는 전환)',
@@ -116,6 +147,7 @@ export const register: Register = (on, options) => {
 
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
+    if (!e.agentId) place = await loadPlace($)
     await bump($)
 
     return done
@@ -125,6 +157,7 @@ export const register: Register = (on, options) => {
     if (e.props.hasSurvey || !(await read($, isOn))) return next(e)
 
     await read($, tick)
+    if (!place) place = await loadPlace($)
     const level = await read($, effort)
     const [usage, model] = await Promise.all([$.session.usage(), $.session.model()])
     const { Box, Text } = $.ui.resolve(e)
@@ -221,8 +254,21 @@ export const register: Register = (on, options) => {
         </Text>
       )
 
-    // 테두리 2줄 + 머리줄 + 요금줄 + 연료줄
-    const rows = 4 + (fuel ? 1 : 0)
+    const route = (
+      <Text wrap="truncate-end">
+        <Text color={theme.accent}>행선지 </Text>
+        <Text bold>{place.project}</Text>
+        {place.branch ? (
+          <Text>
+            <Text color="gray"> ⎇ </Text>
+            <Text color="cyan">{place.branch}</Text>
+          </Text>
+        ) : null}
+      </Text>
+    )
+
+    // 테두리 2줄 + 머리줄 + 요금줄 + 연료·행선지줄
+    const rows = 5
     if (e.props.maxRows < rows) {
       return (
         <Box>
@@ -248,7 +294,10 @@ export const register: Register = (on, options) => {
           {lamps}
         </Box>
         {meter}
-        {fuel}
+        <Box justifyContent="space-between">
+          {fuel ?? route}
+          {fuel ? route : null}
+        </Box>
       </Box>
     )
   })

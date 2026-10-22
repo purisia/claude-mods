@@ -60,3 +60,39 @@ test('/taxi off 하면 미터기가 사라지고 on 하면 돌아온다', async 
   expect(await ui.find({ type: 'Text', text: /CLAUDE TAXI/ })).toBeDefined()
   await ui.unmount()
 })
+
+test('행선지에 프로젝트와 브랜치가 찍힌다', async ($, on) => {
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('session.usage', () => ({ value: USAGE }))
+  on('session.repo', () => ({
+    value: { root: 'D:\_code\O-MI-INFRA2-agi-cylim', remote: null, internal: false, name: null },
+  }))
+  on('process.run', ($, e) => ({
+    value: {
+      exitCode: 0,
+      stdout: e.argv.includes('--show-current') ? 'master\n' : '',
+      stderr: '',
+      isStdoutTruncated: false,
+      isStderrTruncated: false,
+    },
+  }))
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'taxi-meter', surface, ...BAND })
+    expect(await ui.find({ type: 'Text', text: /O-MI-INFRA2-agi-cylim/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^master$/ })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test('git 저장소 밖이면 프로젝트만 찍힌다', async ($, on) => {
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('session.usage', () => ({ value: { ...USAGE, rateLimits: [] } }))
+  on('session.repo', () => ({ value: null }))
+  on('session.root', () => ({ value: '/home/me/notes/' }))
+
+  const ui = await $.ui.mount({ plugin: 'taxi-meter', surface: 'terminal', ...BAND })
+  expect(await ui.find({ type: 'Text', text: /^notes$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: / ⎇ / })).toBeUndefined()
+  await ui.unmount()
+})
