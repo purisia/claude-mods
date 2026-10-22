@@ -284,7 +284,7 @@ export const register: Register = (on, options) => {
     return (
       <Box
         borderStyle="round"
-        borderColor={theme.border}
+        borderColor={isSurcharge ? 'red' : theme.border}
         backgroundColor={theme.body}
         flexDirection="column"
         paddingX={1}

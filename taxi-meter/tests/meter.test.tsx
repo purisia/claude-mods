@@ -96,3 +96,18 @@ test('git 저장소 밖이면 프로젝트만 찍힌다', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: / ⎇ / })).toBeUndefined()
   await ui.unmount()
 })
+
+test('할증이면 테두리가 빨개지고 아니면 테마 색이다', async ($, on) => {
+  let percent = 85
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('session.usage', () => ({ value: { ...USAGE, context: { ...USAGE.context, percent } } }))
+
+  let ui = await $.ui.mount({ plugin: 'taxi-meter', surface: 'terminal', ...BAND })
+  expect((await ui.find({ type: 'Box' }))?.props.borderColor).toBe('red')
+  await ui.unmount()
+
+  percent = 50
+  ui = await $.ui.mount({ plugin: 'taxi-meter', surface: 'terminal', ...BAND })
+  expect((await ui.find({ type: 'Box' }))?.props.borderColor).toBe('yellow')
+  await ui.unmount()
+})
