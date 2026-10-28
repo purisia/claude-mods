@@ -6,6 +6,8 @@ import type { Entry, ListAct, ListProps, ListRow, MadeAct, MadeItem, MadeProps, 
 const PANE = 'project-tree'
 // 오른쪽 탭의 폭 (터미널 폭의 45%까지만 열린다)
 const COLUMNS = 50
+// 오른쪽 탭의 배경색 (테마마다 다르게 칠해지지 않도록 터미널 배경을 그대로 쓴다)
+const BACKGROUND = 'transparent'
 // 한 폴더에서 보여 줄 최대 항목 수
 const LIMIT = 300
 // 검색할 때 훑는 최대 파일 수와 보여 줄 최대 결과 수
@@ -407,7 +409,7 @@ async function madeAct($: EngineInterface, request: MadeAct) {
 }
 
 function openTab($: EngineInterface) {
-  return $.ui.open({ id: PANE, title: '프로젝트', columns: COLUMNS })
+  return $.ui.open({ id: PANE, title: '프로젝트', columns: COLUMNS, backgroundColor: BACKGROUND })
 }
 
 // 탭을 접으면 닫고, 프롬프트 위에 다시 펼칠 버튼만 남긴다
