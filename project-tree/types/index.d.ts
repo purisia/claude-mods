@@ -29,7 +29,7 @@ export type ListProps = { rows: ListRow[] }
 // picking은 파일 보기·폴더 보기를 펼쳐 둔 파일
 export type MadeItem = { path: string; kind: TouchKind; name: string; dir: string }
 export type MadeProps = { items: MadeItem[]; picking: string | null }
-export type MadeAct = { act: 'pick' | 'file' | 'folder'; path: string } | { act: 'forget' }
+export type MadeAct = { act: 'pick' | 'file' | 'folder' | 'copy'; path: string } | { act: 'forget' }
 
 declare module 'claude-code' {
   interface PluginState {

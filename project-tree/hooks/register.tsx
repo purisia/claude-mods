@@ -416,6 +416,7 @@ async function madeAct($: EngineInterface, request: MadeAct) {
   }
   await update($, choosing, () => null)
   if (act === 'file') await openWithDefault($, path)
+  else if (act === 'copy') await copyPath($, path)
   else await revealInExplorer($, path)
 }
 
@@ -523,7 +524,7 @@ export const register: Register = on => {
   on('ui.message', { element: 'made' }, async ($, e) => {
     const data = e.data as Partial<{ act: string; path: string }> | null
     if (data?.act === 'forget') await madeAct($, { act: 'forget' })
-    else if ((data?.act === 'pick' || data?.act === 'file' || data?.act === 'folder') && typeof data.path === 'string') {
+    else if ((data?.act === 'pick' || data?.act === 'file' || data?.act === 'folder' || data?.act === 'copy') && typeof data.path === 'string') {
       await madeAct($, { act: data.act, path: data.path })
     }
 
@@ -651,6 +652,7 @@ export const register: Register = on => {
                   <Text dimColor>{'  └'}</Text>
                   <Button key="made-open-file" label="파일 열기" variant="primary" onPress={() => madeAct($, { act: 'file', path: one.path })} />
                   <Button key="made-open-folder" label="폴더 열기" onPress={() => madeAct($, { act: 'folder', path: one.path })} />
+                  <Button key="made-copy" label="경로 복사" onPress={() => madeAct($, { act: 'copy', path: one.path })} />
                 </Box>
               ) : null}
             </Box>

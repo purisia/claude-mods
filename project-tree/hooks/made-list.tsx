@@ -16,6 +16,7 @@ const FORGET = ' 비우기'
 const CHOICE_INDENT = '  └ '
 const OPEN_FILE = '[ 파일 열기 ]'
 const OPEN_FOLDER = '[ 폴더 열기 ]'
+const COPY = '[ 경로 복사 ]'
 const GAP = '  '
 // 앞 칸이 분류 열: + 만듦(green), ~ 고침(yellow)
 const MARKS = { new: '+', edit: '~' } as const
@@ -63,8 +64,10 @@ function actAt(line: Line, x: number, columns: number): MadeAct | null {
 
   const file = cells(CHOICE_INDENT)
   const folder = file + cells(OPEN_FILE + GAP)
+  const copy = folder + cells(OPEN_FOLDER + GAP)
   if (x >= file && x < file + cells(OPEN_FILE)) return { act: 'file', path: line.item.path }
   if (x >= folder && x < folder + cells(OPEN_FOLDER)) return { act: 'folder', path: line.item.path }
+  if (x >= copy && x < copy + cells(COPY)) return { act: 'copy', path: line.item.path }
 
   return null
 }
@@ -137,6 +140,8 @@ const MadeList: ClientModule<MadeProps, State> = (props, surface) => {
               </Text>
               <Text>{GAP}</Text>
               <Text>{OPEN_FOLDER}</Text>
+              <Text>{GAP}</Text>
+              <Text>{COPY}</Text>
             </Text>
           )
         }

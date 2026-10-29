@@ -248,8 +248,11 @@ test('Enter로 검색하면 프로젝트 전체에서 이름이 맞는 파일을
   await ui.unmount()
 })
 
-test('Claude가 새 파일을 만들면 그 폴더까지 펼쳐 +로 표시하고, 최근 작업에서 파일 열기·폴더 열기를 고른다', async ($, on) => {
+test('Claude가 새 파일을 만들면 그 폴더까지 펼쳐 +로 표시하고, 최근 작업에서 파일 열기·폴더 열기·경로 복사를 고른다', async ($, on) => {
   const runs: string[][] = []
+  const copies: string[] = []
+  on('ui.copy', (_: unknown, e: any) => (copies.push(e.text), { value: { isCopied: true } }))
+  on('ui.toast', () => ({ value: undefined }))
   const made = `${ROOT}\\data\\new.csv`
   const data = FILES.data ?? []
   let isWritten = false
@@ -281,7 +284,7 @@ test('Claude가 새 파일을 만들면 그 폴더까지 펼쳐 +로 표시하�
 
   // 누르면 고르는 줄이 펼쳐지고, 다시 누르면 닫힌다
   await press(1)
-  expect((await made1())[2]).toBe('  └ [ 파일 열기 ]  [ 폴더 열기 ]')
+  expect((await made1())[2]).toBe('  └ [ 파일 열기 ]  [ 폴더 열기 ]  [ 경로 복사 ]')
   await press(1)
   expect(await made1()).toHaveLength(2)
 
@@ -294,6 +297,12 @@ test('Claude가 새 파일을 만들면 그 폴더까지 펼쳐 +로 표시하�
   await press(1)
   await press(2, 5)
   expect(runs[1]).toEqual(['explorer.exe', made])
+
+  // 19칸 + '[ 폴더 열기 ]' 13칸 + 2칸 = 34칸부터 경로 복사: 절대 경로를 클립보드에 넣고 줄을 닫는다
+  await press(1)
+  await press(2, 35)
+  expect(copies).toEqual([made])
+  expect(await made1()).toHaveLength(2)
 
   // 제목줄 오른쪽 끝 '비우기'
   await ui.resize({ columns: 40, rows: 2, in: 'made' })
