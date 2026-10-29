@@ -167,6 +167,15 @@ async function openWithDefault($: EngineInterface, path: string) {
   $.ui.toast(`열지 못했습니다: ${baseName(path)}`)
 }
 
+// 절대 경로를 클립보드에 넣는다 (윈도우는 '\' 구분으로 맞춘다)
+// path는 프로젝트 루트 기준 경로이거나 이미 절대 경로다
+async function copyPath($: EngineInterface, path: string) {
+  const full = /^([A-Za-z]:[\\/]|\/)/.test(path) ? path : await absolute($, path)
+  const text = /^[A-Za-z]:[\\/]/.test(full) ? full.replace(/\//g, '\\') : full
+  const { isCopied } = await $.ui.copy({ text }).catch(() => ({ isCopied: false }))
+  $.ui.toast(isCopied ? `경로를 복사했습니다: ${text}` : `경로를 복사하지 못했습니다: ${baseName(path)}`)
+}
+
 // 프로젝트 루트 아래면 루트 기준 경로('/' 구분), 밖이면 ''
 function relativeTo(root: string, full: string): string {
   const norm = (path: string) => path.replace(/\\/g, '/').replace(/\/+$/, '')
@@ -385,8 +394,10 @@ async function listAct($: EngineInterface, { act, path }: ListAct) {
   if (act === 'toggle') await toggle($, path)
   // 다른 파일을 누르면 묻는 줄이 그쪽으로 옮겨 가고, 같은 파일을 다시 누르면 닫힌다
   else if (act === 'ask') await update($, pending, value => (value === path ? null : path))
-  else if (act === 'cancel') await update($, pending, () => null)
-  else if (act === 'confirm') {
+  else if (act === 'copy') {
+    await update($, pending, () => null)
+    await copyPath($, path)
+  } else if (act === 'confirm') {
     await update($, pending, () => null)
     await openWithDefault($, path)
   } else if (act === 'folder') await openFolder($, await absolute($, path))
@@ -652,7 +663,7 @@ export const register: Register = on => {
     const file = (path: string, label: string, depth: number) => {
       // Client props에는 undefined를 담을 수 없어 표시가 있을 때만 mark를 넣는다
       const mark = markOf(path)
-      // 어떤 파일이든 누르면 연다 (열기 전에 묻는다)
+      // 어떤 파일이든 누르면 그 아래에 [열기]·[경로 복사]를 띄운다
       rows.push({ id: path, kind: 'file', depth, label, ...(mark ? { mark } : {}) })
       // 누른 파일 줄 바로 아래에 열지 묻는 줄을 끼운다
       if (asking === path) rows.push({ id: path, kind: 'confirm', depth, label: '' })
@@ -723,11 +734,9 @@ export const register: Register = on => {
       if (row.kind === 'confirm') {
         return (
           <Box key={`confirm:${row.id}`} gap={2}>
-            <Text>
-              <Text dimColor>{`${indent}  └ `}</Text>열까요?
-            </Text>
+            <Text dimColor>{`${indent}  └`}</Text>
             <Button key="confirm-open" label="열기" variant="primary" onPress={() => listAct($, { act: 'confirm', path: row.id })} />
-            <Button key="confirm-cancel" label="취소" onPress={() => listAct($, { act: 'cancel', path: row.id })} />
+            <Button key="confirm-copy" label="경로 복사" onPress={() => listAct($, { act: 'copy', path: row.id })} />
           </Box>
         )
       }

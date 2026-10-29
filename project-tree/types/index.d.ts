@@ -7,7 +7,7 @@ export type Touched = { path: string; kind: TouchKind }
 
 // 목록(Client 영역)의 한 줄. id는 프로젝트 루트 기준 경로
 // dir: 폴더(누르면 펼치기, 이름 뒤 ↗는 탐색기), file: 파일(누르면 묻고 연결 프로그램으로 연다),
-// confirm: file 아래에 끼우는 '열까요?' 줄, note: 안내 글
+// confirm: file 아래에 끼우는 [열기]·[경로 복사] 줄, note: 안내 글
 export type ListRow = {
   id: string
   kind: 'dir' | 'file' | 'confirm' | 'note'
@@ -19,7 +19,7 @@ export type ListRow = {
 }
 
 // 목록이 hooks 모듈에 보내는 요청
-export type ListAct = { act: 'toggle' | 'ask' | 'confirm' | 'cancel' | 'folder'; path: string }
+export type ListAct = { act: 'toggle' | 'ask' | 'confirm' | 'copy' | 'folder'; path: string }
 
 // 목록 영역이 받는 props
 export type ListProps = { rows: ListRow[] }

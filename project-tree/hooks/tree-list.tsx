@@ -8,9 +8,9 @@ type State = { hover: number | null; down: number | null }
 
 // 모양: 배경색 없이 글자색과 1칸 기호만 쓴다 (이모지는 터미널마다 폭이 달라 쓰지 않는다)
 // 줄 = 거터 1칸(커서 ›) + 들여쓰기 + 이름 … + 오른쪽 끝 표시 2칸(+ 만듦, ~ 고침, • 바뀐 것을 품은 접힌 폴더)
-const ASK = '└ 열까요?  '
+const ASK = '└ '
 const OPEN = '[ 열기 ]'
-const CANCEL = '[ 취소 ]'
+const COPY = '[ 경로 복사 ]'
 const GAP = '  '
 // 폴더 열기: 폴더 이름 바로 뒤 📂 (U+1F4C2, VS16 없이 늘 2칸). 평소엔 흐리게, 마우스를 올리면 또렷하게
 const FOLDER = ' 📂'
@@ -59,9 +59,9 @@ function actAt(row: ListRow, x: number): ListAct | null {
   if (row.kind === 'file') return { act: 'ask', path: row.id }
   if (row.kind === 'confirm') {
     const open = cells(indentOf(row) + ASK)
-    const cancel = open + cells(OPEN + GAP)
+    const copy = open + cells(OPEN + GAP)
     if (x >= open && x < open + cells(OPEN)) return { act: 'confirm', path: row.id }
-    if (x >= cancel && x < cancel + cells(CANCEL)) return { act: 'cancel', path: row.id }
+    if (x >= copy && x < copy + cells(COPY)) return { act: 'copy', path: row.id }
   }
 
   return null
@@ -115,13 +115,12 @@ const TreeList: ClientModule<ListProps, State> = (props, surface) => {
             <Text wrap="truncate-end">
               {gutter}
               <Text>{indent}</Text>
-              <Text dimColor>└ </Text>
-              <Text>{ASK.slice(2)}</Text>
+              <Text dimColor>{ASK}</Text>
               <Text color="green" bold>
                 {OPEN}
               </Text>
               <Text>{GAP}</Text>
-              <Text>{CANCEL}</Text>
+              <Text>{COPY}</Text>
             </Text>
           )
         }

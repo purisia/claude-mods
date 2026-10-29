@@ -146,35 +146,53 @@ test('끌다가 다른 줄에서 떼면 아무것도 누르지 않는다', async
   await ui.unmount()
 })
 
-test('파일을 누르면 목록 안에서 묻고, 열기를 누를 때만 연결된 프로그램으로 연다 (확장자 제한 없음)', async ($, on) => {
+test('파일을 누르면 목록 안에 [열기]·[경로 복사]가 뜨고, 열기는 연결된 프로그램으로 연다 (확장자 제한 없음)', async ($, on) => {
   const runs: string[][] = []
   on('process.run', (_: unknown, e: any) => (runs.push(e.argv), { value: { ...OK, exitCode: 1 } }))
   await start($, on)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  // 누르면 그 줄 아래에 묻는 줄이 생기고, 취소하면 사라진다
+  // 누르면 그 줄 아래에 [열기]·[경로 복사] 줄이 생긴다
   await click(ui, 1)
-  expect((await lines(ui))[2]).toBe('  └ 열까요?  [ 열기 ]  [ 취소 ]')
-  // 거터 1 + 들여쓰기 2 + '└ 열까요?  ' 11 = 14칸부터 '[ 열기 ]', 24칸부터 '[ 취소 ]'
-  await click(ui, 2, 25)
-  expect((await lines(ui)).join('\n')).not.toMatch(/열까요/)
+  expect((await lines(ui))[2]).toBe('  └ [ 열기 ]  [ 경로 복사 ]')
+  // 같은 파일을 다시 누르면 닫힌다
+  await click(ui, 1)
+  expect((await lines(ui)).join('\n')).not.toMatch(/경로 복사/)
   expect(runs).toEqual([])
 
-  // 같은 파일을 다시 누르면 묻는 줄이 닫힌다
+  // 거터 1 + 들여쓰기 2 + '└ ' 2 = 5칸부터 '[ 열기 ]', 15칸부터 '[ 경로 복사 ]'
   await click(ui, 1)
-  await click(ui, 1)
-  expect((await lines(ui)).join('\n')).not.toMatch(/열까요/)
-
-  await click(ui, 1)
-  await click(ui, 2, 15)
+  await click(ui, 2, 6)
   expect(runs).toEqual([['explorer.exe', `${ROOT}\\README.md`]])
-  expect((await lines(ui)).join('\n')).not.toMatch(/열까요/)
+  expect((await lines(ui)).join('\n')).not.toMatch(/경로 복사/)
 
-  // .json처럼 어떤 파일이든 묻고 연다
+  // .json처럼 어떤 파일이든 연다
   await click(ui, 2)
-  expect((await lines(ui))[3]).toMatch(/열까요/)
-  await click(ui, 3, 15)
+  expect((await lines(ui))[3]).toMatch(/경로 복사/)
+  await click(ui, 3, 6)
   expect(runs[1]).toEqual(['explorer.exe', `${ROOT}\\zz.json`])
+  await ui.unmount()
+})
+
+test('[경로 복사]는 절대 경로를 클립보드에 넣고 줄을 닫는다', async ($, on) => {
+  const copies: string[] = []
+  const toasts: string[] = []
+  on('ui.copy', (_: unknown, e: any) => (copies.push(e.text), { value: { isCopied: true } }))
+  on('ui.toast', (_: unknown, e: any) => (toasts.push(e.text), { value: undefined }))
+  await start($, on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  await click(ui, 1)
+  await click(ui, 2, 16)
+  expect(copies).toEqual([`${ROOT}\\README.md`])
+  expect(toasts.at(-1)).toBe(`경로를 복사했습니다: ${ROOT}\\README.md`)
+  expect((await lines(ui)).join('\n')).not.toMatch(/경로 복사/)
+
+  // 폴더 안 파일도 '\'로 이어 붙인 절대 경로
+  await click(ui, 0)
+  await click(ui, 1)
+  await click(ui, 2, 18)
+  expect(copies[1]).toBe(`${ROOT}\\data\\dates.json`)
   await ui.unmount()
 })
 
