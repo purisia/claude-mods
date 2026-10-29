@@ -6,20 +6,21 @@ export type TouchKind = 'new' | 'edit'
 export type Touched = { path: string; kind: TouchKind }
 
 // 목록(Client 영역)의 한 줄. id는 프로젝트 루트 기준 경로
-// dir: 폴더(누르면 펼치기, 이름 뒤 ↗는 탐색기), file: 파일(누르면 묻고 연결 프로그램으로 연다),
-// confirm: file 아래에 끼우는 [열기]·[경로 복사] 줄, note: 안내 글
+// dir: 폴더(누르면 펼치거나 접고 고른다), file: 파일(누르면 고른다), note: 안내 글
+// 고른 줄은 배경을 뒤집어 그리고, 열기·경로 복사는 검색칸 아래 액션 줄에서 한다
 export type ListRow = {
   id: string
-  kind: 'dir' | 'file' | 'confirm' | 'note'
+  kind: 'dir' | 'file' | 'note'
   depth: number
   label: string
   isOpen?: boolean
+  isSelected?: boolean
   // Claude가 방금 만든 파일(new)이나 고친 파일(edit)
   mark?: TouchKind
 }
 
 // 목록이 hooks 모듈에 보내는 요청
-export type ListAct = { act: 'toggle' | 'ask' | 'confirm' | 'copy' | 'folder'; path: string }
+export type ListAct = { act: 'toggle' | 'select'; path: string }
 
 // 목록 영역이 받는 props
 export type ListProps = { rows: ListRow[] }
@@ -46,13 +47,11 @@ declare module 'claude-code' {
       index: string[] | null
       // Claude가 새로 만들거나 고친 파일(절대 경로), 최근 것부터
       recent: Touched[]
-      // 열지 묻고 있는 파일 (프로젝트 루트 기준), 없으면 null
-      pending: string | null
-      // 설정 화면을 보고 있는지
-      isSettings: boolean
+      // 목록에서 고른 파일·폴더 (프로젝트 루트 기준), 없으면 null
+      selected: string | null
       // 최근 작업 파일 중 파일 보기·폴더 보기를 펼쳐 둔 것 (절대 경로)
       choosing: string | null
-      // 최근 작업 파일에 남겨 둘 개수
+      // 최근 작업 파일에 남겨 둘 개수 (/config 의 recentLimit)
       recentLimit: number
     }
   }

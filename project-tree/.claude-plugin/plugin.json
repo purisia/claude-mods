@@ -1,9 +1,17 @@
 {
   "name": "project-tree",
-  "version": "0.2.4",
-  "description": "현재 프로젝트 폴더를 오른쪽 탭에 트리로 띄우고, 검색하고, Claude가 만들고 고친 파일을 표시하며, 파일은 연결된 프로그램으로·폴더는 탐색기로 연다",
+  "version": "0.3.0",
+  "description": "현재 프로젝트 폴더를 오른쪽 탭에 트리로 띄우고, 검색하고, Claude가 만들고 고친 파일을 표시하며, 고른 파일·폴더를 열거나 절대 경로를 복사한다",
   "author": {
     "name": "purisia"
   },
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "recentLimit": {
+      "type": "number",
+      "title": "최근 작업에 남길 파일 수",
+      "description": "탭 맨 아래 '최근 작업'에 남겨 둘 파일 개수. 1~30, 기본 8. 줄이면 넘치는 오래된 것은 바로 빠진다.",
+      "default": 8
+    }
+  }
 }

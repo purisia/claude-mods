@@ -8,16 +8,11 @@ type State = { hover: number | null; down: number | null }
 
 // 모양: 배경색 없이 글자색과 1칸 기호만 쓴다 (이모지는 터미널마다 폭이 달라 쓰지 않는다)
 // 줄 = 거터 1칸(커서 ›) + 들여쓰기 + 이름 … + 오른쪽 끝 표시 2칸(+ 만듦, ~ 고침, • 바뀐 것을 품은 접힌 폴더)
-const ASK = '└ '
-const OPEN = '[ 열기 ]'
-const COPY = '[ 경로 복사 ]'
-const GAP = '  '
-// 폴더 열기: 폴더 이름 바로 뒤 📂 (U+1F4C2, VS16 없이 늘 2칸). 평소엔 흐리게, 마우스를 올리면 또렷하게
-const FOLDER = ' 📂'
+// 고른 줄은 배경을 뒤집는다(inverse): 터미널 테마가 무엇이든 글자와 배경이 늘 대비된다
 const MARKS = { new: ' +', edit: ' ~' } as const
 const COLORS = { new: 'green', edit: 'yellow' } as const
 
-// 거터 1칸 + 깊이마다 2칸 + 파일·확인 줄은 폴더 기호 자리 2칸
+// 거터 1칸 + 깊이마다 2칸 + 파일 줄은 폴더 기호 자리 2칸
 function indentOf(row: ListRow): string {
   return ` ${'  '.repeat(row.depth)}${row.kind === 'dir' ? '' : '  '}`
 }
@@ -48,21 +43,10 @@ function caretOf(row: ListRow): string {
   return row.isOpen ? '▾ ' : '▸ '
 }
 
-// 한 줄에서 x칸을 누르면 무엇을 할지
-function actAt(row: ListRow, x: number): ListAct | null {
-  if (row.kind === 'dir') {
-    // 이름 뒤 ' 📂' 3칸(앞 공백 포함)을 누르면 탐색기, 나머지는 펼치기·접기
-    const start = cells(indentOf(row) + caretOf(row) + row.label + '/')
-    const isFolder = x >= start && x < start + cells(FOLDER)
-    return { act: isFolder ? 'folder' : 'toggle', path: row.id }
-  }
-  if (row.kind === 'file') return { act: 'ask', path: row.id }
-  if (row.kind === 'confirm') {
-    const open = cells(indentOf(row) + ASK)
-    const copy = open + cells(OPEN + GAP)
-    if (x >= open && x < open + cells(OPEN)) return { act: 'confirm', path: row.id }
-    if (x >= copy && x < copy + cells(COPY)) return { act: 'copy', path: row.id }
-  }
+// 줄을 누르면 무엇을 할지: 폴더는 펼치거나 접으며 고르고, 파일은 고른다 (줄 어디를 눌러도 같다)
+function actOf(row: ListRow): ListAct | null {
+  if (row.kind === 'dir') return { act: 'toggle', path: row.id }
+  if (row.kind === 'file') return { act: 'select', path: row.id }
 
   return null
 }
@@ -80,7 +64,7 @@ function listen(surface: ClientSurface<State>, props: () => ListProps) {
     } else if (event.type === 'up') {
       // 누른 줄에서 뗐을 때만 누른 것으로 친다 (끌다가 다른 줄에서 떼면 아무것도 안 함)
       const row = at !== null && at === state.down ? props().rows[at] : undefined
-      const act = row ? actAt(row, event.x) : null
+      const act = row ? actOf(row) : null
       if (act) surface.post(act)
       surface.setState({ ...state, down: null })
     } else if (event.type === 'move' && event.button === undefined) {
@@ -106,24 +90,14 @@ const TreeList: ClientModule<ListProps, State> = (props, surface) => {
     <Box flexDirection="column">
       {props.rows.map((row, i) => {
         const isHover = i === state?.hover
-        // 거터 1칸은 비워 둔다 (커서·선택 표시는 그리지 않는다. 클릭 위치 계산은 이 칸을 센다)
+        // 거터 1칸은 비워 둔다 (커서 표시는 그리지 않는다. 고른 줄은 거터 뒤부터 뒤집는다)
         const gutter = <Text> </Text>
         const indent = indentOf(row).slice(1)
+        const isSelected = row.isSelected === true
+        // 고른 줄은 오른쪽 표시 칸 앞까지 빈칸을 채워 줄 전체가 뒤집혀 보이게 한다 (처음 그릴 때는 폭을 몰라 채우지 않는다)
+        const fill = (text: string) =>
+          isSelected ? ' '.repeat(Math.max(0, surface.columns - cells(` ${text}`) - 2)) : ''
 
-        if (row.kind === 'confirm') {
-          return (
-            <Text wrap="truncate-end">
-              {gutter}
-              <Text>{indent}</Text>
-              <Text dimColor>{ASK}</Text>
-              <Text color="green" bold>
-                {OPEN}
-              </Text>
-              <Text>{GAP}</Text>
-              <Text>{COPY}</Text>
-            </Text>
-          )
-        }
         if (row.kind === 'note') {
           return (
             <Text wrap="truncate-end">
@@ -142,16 +116,22 @@ const TreeList: ClientModule<ListProps, State> = (props, surface) => {
           <Text>{'  '}</Text>
         )
 
+        // 마우스를 올린 줄은 이름을 굵게
         if (row.kind === 'dir') {
+          const name = `${row.label}/`
           return (
             <Box width="100%">
               <Box flexGrow={1} flexShrink={1}>
                 <Text wrap="truncate-end">
                   {gutter}
-                  <Text>{indent}</Text>
-                  <Text dimColor>{caretOf(row)}</Text>
-                  <Text color="cyan">{`${row.label}/`}</Text>
-                  <Text dimColor={!isHover}>{FOLDER}</Text>
+                  <Text inverse={isSelected}>
+                    <Text>{indent}</Text>
+                    <Text dimColor={!isSelected}>{caretOf(row)}</Text>
+                    <Text color="cyan" bold={isHover}>
+                      {name}
+                    </Text>
+                    <Text>{fill(indent + caretOf(row) + name)}</Text>
+                  </Text>
                 </Text>
               </Box>
               {mark}
@@ -165,8 +145,13 @@ const TreeList: ClientModule<ListProps, State> = (props, surface) => {
             <Box flexGrow={1} flexShrink={1}>
               <Text wrap="truncate-end">
                 {gutter}
-                <Text>{indent}</Text>
-                <Text color={row.mark ? COLORS[row.mark] : undefined}>{row.label}</Text>
+                <Text inverse={isSelected}>
+                  <Text>{indent}</Text>
+                  <Text color={row.mark ? COLORS[row.mark] : undefined} bold={isHover}>
+                    {row.label}
+                  </Text>
+                  <Text>{fill(indent + row.label)}</Text>
+                </Text>
               </Text>
             </Box>
             {mark}

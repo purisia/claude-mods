@@ -92,16 +92,18 @@ test('세션이 시작되면 오른쪽 탭이 열리고, 목록에 폴더가 먼
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect((await ui.find({ type: 'Button', key: 'folder:' }))?.text).toMatch(/my-project/)
-  // 폴더 이름 뒤에 폴더 열기 📂
-  expect(await lines(ui)).toEqual(['▸ data/ 📂', '  README.md', '  zz.json'])
+  expect(await lines(ui)).toEqual(['▸ data/', '  README.md', '  zz.json'])
+  // 고르기 전에는 액션 줄 자리에 안내만
+  expect(await ui.find({ type: 'Text', text: /파일·폴더를 누르면/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'act-open' })).toBeUndefined()
   await ui.unmount()
 })
 
-test('접기 기능은 없다: 머리줄에 접기 버튼이 없고 프롬프트 위 띠에도 손대지 않는다', async ($, on) => {
+test('접기·설정 버튼은 없다: 설정은 /config 에서 하고, 프롬프트 위 띠에도 손대지 않는다', async ($, on) => {
   await start($, on)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ type: 'Button', key: 'fold' })).toBeUndefined()
-  expect(await ui.find({ type: 'Button', key: 'settings' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'settings' })).toBeUndefined()
   await ui.unmount()
 
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' } as any)
@@ -138,35 +140,57 @@ test('끌다가 다른 줄에서 떼면 아무것도 누르지 않는다', async
   await ui.unmount()
 })
 
-test('파일을 누르면 목록 안에 [열기]·[경로 복사]가 뜨고, 열기는 연결된 프로그램으로 연다 (확장자 제한 없음)', async ($, on) => {
+// 고른 줄은 inverse 로 그린다: 목록 영역 그림에 inverse 가 켜진 글자가 있는지 본다
+async function hasInverse(ui: any): Promise<boolean> {
+  return JSON.stringify(await ui.drawn({ in: 'tree' })).includes('"inverse":true')
+}
+
+test('파일을 누르면 줄이 뒤집혀 골라지고, 액션 줄의 [열기]는 연결된 프로그램으로 연다 (목록은 밀리지 않는다)', async ($, on) => {
   const runs: string[][] = []
   on('process.run', (_: unknown, e: any) => (runs.push(e.argv), { value: { ...OK, exitCode: 1 } }))
   await start($, on)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const before = await lines(ui)
+  expect(await hasInverse(ui)).toBe(false)
 
-  // 누르면 그 줄 아래에 [열기]·[경로 복사] 줄이 생긴다
   await click(ui, 1)
-  expect((await lines(ui))[2]).toBe('  └ [ 열기 ]  [ 경로 복사 ]')
-  // 같은 파일을 다시 누르면 닫힌다
-  await click(ui, 1)
-  expect((await lines(ui)).join('\n')).not.toMatch(/경로 복사/)
+  expect(await hasInverse(ui)).toBe(true)
+  // 목록 안에 줄이 끼어들지 않는다
+  expect(await lines(ui)).toEqual(before)
+  expect(await ui.find({ type: 'Text', text: /^README\.md$/ })).toBeDefined()
   expect(runs).toEqual([])
 
-  // 거터 1 + 들여쓰기 2 + '└ ' 2 = 5칸부터 '[ 열기 ]', 15칸부터 '[ 경로 복사 ]'
-  await click(ui, 1)
-  await click(ui, 2, 6)
+  await ui.press({ key: 'act-open' })
   expect(runs).toEqual([['explorer.exe', `${ROOT}\\README.md`]])
-  expect((await lines(ui)).join('\n')).not.toMatch(/경로 복사/)
+  // 열어도 고른 채로 남는다
+  expect(await hasInverse(ui)).toBe(true)
 
-  // .json처럼 어떤 파일이든 연다
+  // 다른 파일을 누르면 그쪽으로 옮겨 가고, 같은 줄을 다시 누르면 풀린다
   await click(ui, 2)
-  expect((await lines(ui))[3]).toMatch(/경로 복사/)
-  await click(ui, 3, 6)
+  await ui.press({ key: 'act-open' })
   expect(runs[1]).toEqual(['explorer.exe', `${ROOT}\\zz.json`])
+  await click(ui, 2)
+  expect(await hasInverse(ui)).toBe(false)
+  expect(await ui.find({ type: 'Button', key: 'act-open' })).toBeUndefined()
   await ui.unmount()
 })
 
-test('[경로 복사]는 절대 경로를 클립보드에 넣고 줄을 닫는다', async ($, on) => {
+test('폴더를 누르면 펼치면서 골라지고, [열기]는 탐색기로 연다', async ($, on) => {
+  const runs: string[][] = []
+  on('process.run', (_: unknown, e: any) => (runs.push([e.argv[0], e.init?.env?.REVEAL_FOLDER]), { value: OK }))
+  await start($, on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  await click(ui, 0)
+  expect(await lines(ui)).toContain('    dates.json')
+  expect(await hasInverse(ui)).toBe(true)
+  expect(await ui.find({ type: 'Text', text: /^data\/$/ })).toBeDefined()
+  await ui.press({ key: 'act-open' })
+  expect(runs.at(-1)).toEqual(['powershell.exe', `${ROOT}\\data`])
+  await ui.unmount()
+})
+
+test('[경로 복사]는 파일이든 폴더든 절대 경로를 클립보드에 넣는다', async ($, on) => {
   const copies: string[] = []
   const toasts: string[] = []
   on('ui.copy', (_: unknown, e: any) => (copies.push(e.text), { value: { isCopied: true } }))
@@ -175,16 +199,17 @@ test('[경로 복사]는 절대 경로를 클립보드에 넣고 줄을 닫는�
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
   await click(ui, 1)
-  await click(ui, 2, 16)
+  await ui.press({ key: 'act-copy' })
   expect(copies).toEqual([`${ROOT}\\README.md`])
   expect(toasts.at(-1)).toBe(`경로를 복사했습니다: ${ROOT}\\README.md`)
-  expect((await lines(ui)).join('\n')).not.toMatch(/경로 복사/)
 
-  // 폴더 안 파일도 '\'로 이어 붙인 절대 경로
+  // 폴더, 그리고 폴더 안 파일도 '\'로 이어 붙인 절대 경로
   await click(ui, 0)
+  await ui.press({ key: 'act-copy' })
+  expect(copies[1]).toBe(`${ROOT}\\data`)
   await click(ui, 1)
-  await click(ui, 2, 18)
-  expect(copies[1]).toBe(`${ROOT}\\data\\dates.json`)
+  await ui.press({ key: 'act-copy' })
+  expect(copies[2]).toBe(`${ROOT}\\data\\dates.json`)
   await ui.unmount()
 })
 
@@ -201,7 +226,7 @@ test('마우스로만 쓴다: 키를 눌러도 아무것도 하지 않는다', a
   await ui.unmount()
 })
 
-test('폴더 이름 옆 📂와 머리줄의 프로젝트 이름으로 탐색기를 연다', async ($, on) => {
+test('머리줄의 프로젝트 이름과 고른 폴더의 [열기]로 탐색기를 연다', async ($, on) => {
   const runs: string[][] = []
   const encoded: string[] = []
   on('process.run', (_: unknown, e: any) => {
@@ -213,8 +238,8 @@ test('폴더 이름 옆 📂와 머리줄의 프로젝트 이름으로 탐색기
   await start($, on)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.press({ key: 'folder:' })
-  // 거터 1 + '▸ data/' 7칸 = 8칸부터 ' 📂' 3칸
-  await click(ui, 0, 9)
+  await click(ui, 0)
+  await ui.press({ key: 'act-open' })
   expect(runs).toEqual([
     ['powershell.exe', ROOT, ''],
     ['powershell.exe', `${ROOT}\\data`, ''],
@@ -358,15 +383,12 @@ test('Claude가 고친 파일은 ~로, 최근 작업에도 올라간다 (만든 
 
   // data/를 접으면 안에 만든 파일이 있다는 • 가 붙는다
   await click(ui, 0)
-  expect((await lines(ui))[0]).toBe('▸ data/ 📂 •')
+  expect((await lines(ui))[0]).toBe('▸ data/ •')
   data.pop()
   await ui.unmount()
 })
 
-test('설정에서 남겨 둘 개수를 바꾸면 저장되고 넘치는 오래된 것은 빠진다', async ($, on) => {
-  const stored: Record<string, unknown> = {}
-  on('store.get', (_: unknown, e: any) => ({ value: stored[e.key] }))
-  on('store.set', (_: unknown, e: any) => ((stored[e.key] = e.value), { value: undefined }))
+test('/config 의 recentLimit 만큼만 최근 작업에 남긴다', { options: { recentLimit: 2 } }, async ($, on) => {
   on('fs.exists', () => ({ value: true }))
   on('tool.call', () => ({ result: {} }))
   await start($, on)
@@ -374,17 +396,21 @@ test('설정에서 남겨 둘 개수를 바꾸면 저장되고 넘치는 오래�
   for (const name of ['a.txt', 'b.txt', 'c.txt']) {
     await $.tool.call({ tool: 'Edit', file_path: `${ROOT}/${name}`, old_string: 'x', new_string: 'y' } as any)
   }
-  expect(linesOf(await ui.drawn({ in: 'made' }))).toHaveLength(4)
-
-  await ui.press({ key: 'settings' })
-  expect(await ui.find({ type: 'Text', text: /^8개$/ })).toBeDefined()
-  await ui.press({ key: 'limit-up' })
-  expect(stored.recentLimit).toBe(9)
-  for (let i = 0; i < 7; i++) await ui.press({ key: 'limit-down' })
-  expect(stored.recentLimit).toBe(2)
-  await ui.press({ key: 'settings' })
   // 최근 것 둘만 남는다
   expect(linesOf(await ui.drawn({ in: 'made' }))).toEqual(['─ 최근 작업 ─ 비우기', '~ c.txt', '~ b.txt'])
+  await ui.unmount()
+})
+
+test('/config 값이 범위를 넘으면 1~30 으로 맞춘다', { options: { recentLimit: 99 } }, async ($, on) => {
+  on('fs.exists', () => ({ value: true }))
+  on('tool.call', () => ({ result: {} }))
+  await start($, on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  for (let i = 0; i < 32; i++) {
+    await $.tool.call({ tool: 'Edit', file_path: `${ROOT}/f${i}.txt`, old_string: 'x', new_string: 'y' } as any)
+  }
+  // 제목 1줄 + 30개
+  expect(linesOf(await ui.drawn({ in: 'made' }))).toHaveLength(31)
   await ui.unmount()
 })
 
