@@ -12,9 +12,17 @@ type State = { hover: number | null; down: number | null }
 const MARKS = { new: ' +', edit: ' ~' } as const
 const COLORS = { new: 'green', edit: 'yellow' } as const
 
+// modern(opencode 식): 폴더는 흐리게, 강조색은 고른 줄에만, 이름은 칠하지 않고 오른쪽 표시 칸만 칠한다
+// 고른 줄은 뒤집지 않고 강조색(/config 의 강조색, props.accent)·굵게, 들여쓰기는 깊이마다 흐린 세로줄 '│ '
+
 // 거터 1칸 + 깊이마다 2칸 + 파일 줄은 폴더 기호 자리 2칸
 function indentOf(row: ListRow): string {
   return ` ${'  '.repeat(row.depth)}${row.kind === 'dir' ? '' : '  '}`
+}
+
+// modern 들여쓰기: 깊이마다 '│ ' (폭은 classic과 같아 누르는 자리는 그대로다)
+function railOf(row: ListRow): string {
+  return '│ '.repeat(row.depth)
 }
 
 // 터미널에서 글자가 차지하는 칸 수: 한글·한자·전각·이모지는 2칸, 결합 문자는 0칸
@@ -43,8 +51,21 @@ function caretOf(row: ListRow): string {
   return row.isOpen ? '▾ ' : '▸ '
 }
 
+// 고른 줄 오른쪽 끝(표시 칸 앞)에 작게 붙는 '열기 복사' (/config 의 actionsAt이 right일 때, row.hasActions)
+// 줄 = … 이름 … + ' 열기 복사' 10칸 + 표시 2칸: 들여쓰기·트리 모양은 그대로다
+const OPEN = '열기'
+const COPY = '복사'
+const ACTIONS = ` ${OPEN} ${COPY}`
+
 // 줄을 누르면 무엇을 할지: 폴더는 펼치거나 접으며 고르고, 파일은 고른다 (줄 어디를 눌러도 같다)
-function actOf(row: ListRow): ListAct | null {
+// 고른 줄 오른쪽 '열기'·'복사' 위를 누르면 그것을 한다 (columns는 목록 영역의 폭)
+function actOf(row: ListRow, x: number, columns: number): ListAct | null {
+  if (row.hasActions && columns > 0) {
+    const open = columns - 2 - cells(ACTIONS) + 1
+    const copy = open + cells(`${OPEN} `)
+    if (x >= open && x < open + cells(OPEN)) return { act: 'open', path: row.id, isDir: row.kind === 'dir' }
+    if (x >= copy && x < copy + cells(COPY)) return { act: 'copy', path: row.id }
+  }
   if (row.kind === 'dir') return { act: 'toggle', path: row.id }
   if (row.kind === 'file') return { act: 'select', path: row.id }
 
@@ -64,7 +85,7 @@ function listen(surface: ClientSurface<State>, props: () => ListProps) {
     } else if (event.type === 'up') {
       // 누른 줄에서 뗐을 때만 누른 것으로 친다 (끌다가 다른 줄에서 떼면 아무것도 안 함)
       const row = at !== null && at === state.down ? props().rows[at] : undefined
-      const act = row ? actOf(row) : null
+      const act = row ? actOf(row, event.x, surface.columns) : null
       if (act) surface.post(act)
       surface.setState({ ...state, down: null })
     } else if (event.type === 'move' && event.button === undefined) {
@@ -86,6 +107,70 @@ const TreeList: ClientModule<ListProps, State> = (props, surface) => {
   }
   latest = props
 
+  // 고른 줄 오른쪽의 '열기 복사': 열기는 강조색(classic 기본이면 green), 복사는 기본색, 둘 다 굵게
+  const actions = (row: ListRow) =>
+    row.hasActions ? (
+      <Text>
+        <Text> </Text>
+        <Text color={props.accent || 'green'} bold>
+          {OPEN}
+        </Text>
+        <Text> </Text>
+        <Text bold>{COPY}</Text>
+      </Text>
+    ) : null
+
+  if (props.look === 'modern') {
+    return (
+      <Box flexDirection="column">
+        {props.rows.map((row, i) => {
+          const isHover = i === state?.hover
+          const isSelected = row.isSelected === true
+          if (row.kind === 'note') {
+            return (
+              <Text wrap="truncate-end">
+                <Text dimColor>{` ${railOf(row)}  `}</Text>
+                <Text dimColor italic>
+                  {row.label}
+                </Text>
+              </Text>
+            )
+          }
+          const mark = row.mark ? (
+            <Text color={COLORS[row.mark]} bold>
+              {row.kind === 'dir' ? ' •' : MARKS[row.mark]}
+            </Text>
+          ) : (
+            <Text>{'  '}</Text>
+          )
+          const lead = row.kind === 'dir' ? caretOf(row) : '  '
+          // 폴더는 흐리게, 파일은 기본색, 고른 줄만 강조색·굵게, 마우스를 올린 줄은 굵게
+          const name = row.kind === 'dir' ? `${row.label}/` : row.label
+
+          return (
+            <Box width="100%">
+              <Box flexGrow={1} flexShrink={1}>
+                <Text wrap="truncate-end">
+                  <Text dimColor>{` ${railOf(row)}${lead}`}</Text>
+                  <Text
+                    {...(isSelected ? { color: props.accent } : {})}
+                    dimColor={row.kind === 'dir' && !isSelected && !isHover}
+                    bold={isSelected || isHover}
+                  >
+                    {name}
+                  </Text>
+                  {row.detail ? <Text dimColor>{`  ${row.detail}`}</Text> : null}
+                </Text>
+              </Box>
+              {actions(row)}
+              {mark}
+            </Box>
+          )
+        })}
+      </Box>
+    )
+  }
+
   return (
     <Box flexDirection="column">
       {props.rows.map((row, i) => {
@@ -95,8 +180,11 @@ const TreeList: ClientModule<ListProps, State> = (props, surface) => {
         const indent = indentOf(row).slice(1)
         const isSelected = row.isSelected === true
         // 고른 줄은 오른쪽 표시 칸 앞까지 빈칸을 채워 줄 전체가 뒤집혀 보이게 한다 (처음 그릴 때는 폭을 몰라 채우지 않는다)
+        // 오른쪽에 '열기 복사'가 붙은 줄은 그 폭만큼 덜 채운다
         const fill = (text: string) =>
-          isSelected ? ' '.repeat(Math.max(0, surface.columns - cells(` ${text}`) - 2)) : ''
+          isSelected
+            ? ' '.repeat(Math.max(0, surface.columns - cells(` ${text}`) - 2 - (row.hasActions ? cells(ACTIONS) : 0)))
+            : ''
 
         if (row.kind === 'note') {
           return (
@@ -127,13 +215,14 @@ const TreeList: ClientModule<ListProps, State> = (props, surface) => {
                   <Text inverse={isSelected}>
                     <Text>{indent}</Text>
                     <Text dimColor={!isSelected}>{caretOf(row)}</Text>
-                    <Text color="cyan" bold={isHover}>
+                    <Text color={props.accent || 'cyan'} bold={isHover}>
                       {name}
                     </Text>
                     <Text>{fill(indent + caretOf(row) + name)}</Text>
                   </Text>
                 </Text>
               </Box>
+              {actions(row)}
               {mark}
             </Box>
           )
@@ -154,6 +243,7 @@ const TreeList: ClientModule<ListProps, State> = (props, surface) => {
                 </Text>
               </Text>
             </Box>
+            {actions(row)}
             {mark}
           </Box>
         )
@@ -163,6 +253,6 @@ const TreeList: ClientModule<ListProps, State> = (props, surface) => {
 }
 
 // 리스너가 읽는 마지막 props (모듈은 인스턴스 하나만 그린다)
-let latest: ListProps = { rows: [] }
+let latest: ListProps = { rows: [], look: 'modern', accent: 'suggestion' }
 
 export default TreeList

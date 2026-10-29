@@ -5,25 +5,39 @@ export type Entry = { name: string; isDir: boolean }
 export type TouchKind = 'new' | 'edit'
 export type Touched = { path: string; kind: TouchKind }
 
+// 탭 모양 (/config 의 look): modern은 테두리 없이 세로줄·색 칩, classic은 둥근 테두리
+export type Look = 'modern' | 'classic'
+
+// 열기·경로 복사 자리 (/config 의 actionsAt): right는 고른 줄 오른쪽 끝에 작게, top은 검색칸 아래 고정
+export type ActionsAt = 'right' | 'top'
+
 // 목록(Client 영역)의 한 줄. id는 프로젝트 루트 기준 경로
 // dir: 폴더(누르면 펼치거나 접고 고른다), file: 파일(누르면 고른다), note: 안내 글
-// 고른 줄은 배경을 뒤집어 그리고, 열기·경로 복사는 검색칸 아래 액션 줄에서 한다
+// 고른 줄은 classic은 배경을 뒤집고 modern은 강조색·굵게
 export type ListRow = {
   id: string
   kind: 'dir' | 'file' | 'note'
+  // 고른 줄 오른쪽 끝에 '열기 복사'를 붙인다 (actionsAt이 right일 때)
+  hasActions?: boolean
   depth: number
   label: string
+  // 이름 뒤에 흐리게 붙이는 폴더 (modern 검색 결과)
+  detail?: string
   isOpen?: boolean
   isSelected?: boolean
   // Claude가 방금 만든 파일(new)이나 고친 파일(edit)
   mark?: TouchKind
 }
 
-// 목록이 hooks 모듈에 보내는 요청
-export type ListAct = { act: 'toggle' | 'select'; path: string }
+// 목록이 hooks 모듈에 보내는 요청 (open·copy는 고른 줄 오른쪽 '열기 복사'에서)
+export type ListAct =
+  | { act: 'toggle' | 'select' | 'copy'; path: string }
+  | { act: 'open'; path: string; isDir: boolean }
 
 // 목록 영역이 받는 props
-export type ListProps = { rows: ListRow[] }
+// accent: 강조색 (테마 색 이름이나 #RRGGBB). modern은 고른 줄·[열기], classic은 폴더 이름·[열기]에 칠하고
+// classic에서 빈 문자열이면 원래 색(폴더 cyan, [열기] green)
+export type ListProps = { rows: ListRow[]; look: Look; accent: string }
 
 // 최근 작업 파일 영역(made-list.tsx)이 받는 props와 보내는 요청.
 // name은 파일 이름, dir은 뒤에 흐리게 붙일 폴더(프로젝트 안이면 루트 기준, 밖이면 끝 두 단계),

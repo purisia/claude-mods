@@ -86,7 +86,7 @@ async function click(ui: any, y: number, x = 2) {
   await ui.pointer({ type: 'up', x, y, button: 'left', in: 'tree' })
 }
 
-test('세션이 시작되면 오른쪽 탭이 열리고, 목록에 폴더가 먼저 찍히며 .git은 빠진다', async ($, on) => {
+test('세션이 시작되면 오른쪽 탭이 열리고, 목록에 폴더가 먼저 찍히며 .git은 빠진다', { options: { actionsAt: 'top' } }, async ($, on) => {
   const panes = await start($, on)
   expect(panes.open).toEqual(['project-tree'])
 
@@ -124,7 +124,7 @@ test('폴더 줄을 누르면 펼쳐지고 다시 누르면 접힌다', async ($
   await start($, on)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await click(ui, 0)
-  expect(await lines(ui)).toContain('    dates.json')
+  expect(await lines(ui)).toContain('│   dates.json')
   await click(ui, 0)
   expect((await lines(ui)).join('\n')).not.toMatch(/dates\.json/)
   await ui.unmount()
@@ -140,21 +140,21 @@ test('끌다가 다른 줄에서 떼면 아무것도 누르지 않는다', async
   await ui.unmount()
 })
 
-// 고른 줄은 inverse 로 그린다: 목록 영역 그림에 inverse 가 켜진 글자가 있는지 본다
-async function hasInverse(ui: any): Promise<boolean> {
-  return JSON.stringify(await ui.drawn({ in: 'tree' })).includes('"inverse":true')
+// 고른 줄은 강조색(suggestion)·굵게 그린다: 목록 영역 그림에 그 색 글자가 있는지 본다
+async function hasSelected(ui: any): Promise<boolean> {
+  return JSON.stringify(await ui.drawn({ in: 'tree' })).includes('"color":"suggestion"')
 }
 
-test('파일을 누르면 줄이 뒤집혀 골라지고, 액션 줄의 [열기]는 연결된 프로그램으로 연다 (목록은 밀리지 않는다)', async ($, on) => {
+test('파일을 누르면 줄이 강조색으로 골라지고, 액션 줄의 [열기]는 연결된 프로그램으로 연다 (목록은 밀리지 않는다)', { options: { actionsAt: 'top' } }, async ($, on) => {
   const runs: string[][] = []
   on('process.run', (_: unknown, e: any) => (runs.push(e.argv), { value: { ...OK, exitCode: 1 } }))
   await start($, on)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const before = await lines(ui)
-  expect(await hasInverse(ui)).toBe(false)
+  expect(await hasSelected(ui)).toBe(false)
 
   await click(ui, 1)
-  expect(await hasInverse(ui)).toBe(true)
+  expect(await hasSelected(ui)).toBe(true)
   // 목록 안에 줄이 끼어들지 않는다
   expect(await lines(ui)).toEqual(before)
   expect(await ui.find({ type: 'Text', text: /^README\.md$/ })).toBeDefined()
@@ -163,34 +163,34 @@ test('파일을 누르면 줄이 뒤집혀 골라지고, 액션 줄의 [열기]�
   await ui.press({ key: 'act-open' })
   expect(runs).toEqual([['explorer.exe', `${ROOT}\\README.md`]])
   // 열어도 고른 채로 남는다
-  expect(await hasInverse(ui)).toBe(true)
+  expect(await hasSelected(ui)).toBe(true)
 
   // 다른 파일을 누르면 그쪽으로 옮겨 가고, 같은 줄을 다시 누르면 풀린다
   await click(ui, 2)
   await ui.press({ key: 'act-open' })
   expect(runs[1]).toEqual(['explorer.exe', `${ROOT}\\zz.json`])
   await click(ui, 2)
-  expect(await hasInverse(ui)).toBe(false)
+  expect(await hasSelected(ui)).toBe(false)
   expect(await ui.find({ type: 'Button', key: 'act-open' })).toBeUndefined()
   await ui.unmount()
 })
 
-test('폴더를 누르면 펼치면서 골라지고, [열기]는 탐색기로 연다', async ($, on) => {
+test('폴더를 누르면 펼치면서 골라지고, [열기]는 탐색기로 연다', { options: { actionsAt: 'top' } }, async ($, on) => {
   const runs: string[][] = []
   on('process.run', (_: unknown, e: any) => (runs.push([e.argv[0], e.init?.env?.REVEAL_FOLDER]), { value: OK }))
   await start($, on)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
   await click(ui, 0)
-  expect(await lines(ui)).toContain('    dates.json')
-  expect(await hasInverse(ui)).toBe(true)
+  expect(await lines(ui)).toContain('│   dates.json')
+  expect(await hasSelected(ui)).toBe(true)
   expect(await ui.find({ type: 'Text', text: /^data\/$/ })).toBeDefined()
   await ui.press({ key: 'act-open' })
   expect(runs.at(-1)).toEqual(['powershell.exe', `${ROOT}\\data`])
   await ui.unmount()
 })
 
-test('[경로 복사]는 파일이든 폴더든 절대 경로를 클립보드에 넣는다', async ($, on) => {
+test('[경로 복사]는 파일이든 폴더든 절대 경로를 클립보드에 넣는다', { options: { actionsAt: 'top' } }, async ($, on) => {
   const copies: string[] = []
   const toasts: string[] = []
   on('ui.copy', (_: unknown, e: any) => (copies.push(e.text), { value: { isCopied: true } }))
@@ -226,7 +226,7 @@ test('마우스로만 쓴다: 키를 눌러도 아무것도 하지 않는다', a
   await ui.unmount()
 })
 
-test('머리줄의 프로젝트 이름과 고른 폴더의 [열기]로 탐색기를 연다', async ($, on) => {
+test('머리줄의 프로젝트 이름과 고른 폴더의 [열기]로 탐색기를 연다', { options: { actionsAt: 'top' } }, async ($, on) => {
   const runs: string[][] = []
   const encoded: string[] = []
   on('process.run', (_: unknown, e: any) => {
@@ -251,11 +251,12 @@ test('머리줄의 프로젝트 이름과 고른 폴더의 [열기]로 탐색기
   await ui.unmount()
 })
 
-test('Enter로 검색하면 프로젝트 전체에서 이름이 맞는 파일을 경로째 보여 준다', async ($, on) => {
+test('Enter로 검색하면 프로젝트 전체에서 이름이 맞는 파일을 이름·폴더 순으로 보여 준다', async ($, on) => {
   await start($, on)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.input({ key: 'search-0', text: 'DATES', kind: 'submit' })
-  expect(await lines(ui)).toEqual(['  data/dates.json'])
+  // 이름을 앞에, 폴더를 뒤에 흐리게
+  expect(await lines(ui)).toEqual(['  dates.json  data'])
 
   await ui.input({ key: 'search-0', text: 'nothing-here', kind: 'submit' })
   expect(await ui.find({ type: 'Text', text: /맞는 파일이 없습니다/ })).toBeDefined()
@@ -289,7 +290,7 @@ test('Claude가 새 파일을 만들면 그 폴더까지 펼쳐 +로 표시하�
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
   await $.tool.call({ tool: 'Write', file_path: made, content: 'a,b' } as any)
-  expect(await lines(ui)).toContain('    new.csv +')
+  expect(await lines(ui)).toContain('│   new.csv +')
   expect((await lines(ui))[0]).toMatch(/^▾ data\//)
   // 아래 목록도 Client 영역('made'): 0줄 제목, 1줄 파일, 펼치면 2줄에 파일 열기·폴더 열기
   const made1 = async () => linesOf(await ui.drawn({ in: 'made' }))
@@ -379,11 +380,11 @@ test('Claude가 고친 파일은 ~로, 최근 작업에도 올라간다 (만든 
   // 새로 만든 뒤 고쳐도 +
   await $.tool.call({ tool: 'Write', file_path: made, content: 'a' } as any)
   await $.tool.call({ tool: 'Edit', file_path: made, old_string: 'a', new_string: 'b' } as any)
-  expect(await lines(ui)).toContain('    new.csv +')
+  expect(await lines(ui)).toContain('│   new.csv +')
 
-  // data/를 접으면 안에 만든 파일이 있다는 • 가 붙는다
+  // data/를 접으면 안에 만든 파일이 있다는 • 가 붙는다 (접으며 골라져 오른쪽에 열기·복사도 붙는다)
   await click(ui, 0)
-  expect((await lines(ui))[0]).toBe('▸ data/ •')
+  expect((await lines(ui))[0]).toBe('▸ data/ 열기 복사 •')
   data.pop()
   await ui.unmount()
 })
@@ -422,5 +423,141 @@ test('눌러도 커서·선택 표시(›)는 남지 않는다', async ($, on) =
 
   await click(ui, 0)
   expect(await gutters()).not.toContain('›')
+  await ui.unmount()
+})
+
+test('/config 의 look 이 classic 이면 이전 모양: 테두리, 줄 반전, 공백 들여쓰기, 경로째 검색', { options: { look: 'classic' } }, async ($, on) => {
+  await start($, on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const drawn = JSON.stringify(await ui.drawn())
+  expect(drawn).toContain('"borderStyle":"round"')
+  expect(drawn).not.toContain('┃')
+
+  await click(ui, 0)
+  expect(await lines(ui)).toContain('    dates.json')
+  expect(JSON.stringify(await ui.drawn({ in: 'tree' }))).toContain('"inverse":true')
+
+  await ui.input({ key: 'search-0', text: 'DATES', kind: 'submit' })
+  expect(await lines(ui)).toEqual(['  data/dates.json'])
+  await ui.unmount()
+})
+
+test('modern 은 테두리·배경 없이 세로줄 검색칸과 괄호 버튼, 검색하면 머리줄 오른쪽에 결과 수', async ($, on) => {
+  await start($, on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const drawn = JSON.stringify(await ui.drawn())
+  expect(drawn).not.toContain('"borderStyle"')
+  expect(drawn).toContain('┃')
+  expect(drawn).not.toContain('📂')
+  // 열기·경로 복사는 기본값(right)이면 위에 없고 고른 줄 오른쪽에 붙는다
+  expect(await ui.find({ type: 'Text', text: '[ 경로 복사 ]' })).toBeUndefined()
+  expect(drawn).not.toContain('"backgroundColor"')
+
+  await ui.input({ key: 'search-0', text: 'json', kind: 'submit' })
+  expect(await ui.find({ type: 'Text', text: /^2개$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('/config 의 actionsAt 이 top 이면 고르기 전에도 검색칸 아래에 흐린 버튼 자리가 보인다', { options: { actionsAt: 'top' } }, async ($, on) => {
+  await start($, on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: '[ 경로 복사 ]' })).toBeDefined()
+  expect(JSON.stringify(await ui.drawn())).not.toContain('"backgroundColor"')
+  await ui.unmount()
+})
+
+test('기본값(right)은 누른 줄 오른쪽 끝에 작은 열기·복사를 붙이고, 줄을 끼우지 않아 트리 모양이 그대로다', async ($, on) => {
+  const runs: string[][] = []
+  const copies: string[] = []
+  on('process.run', (_: unknown, e: any) => (runs.push(e.argv), { value: { ...OK, exitCode: 1 } }))
+  on('ui.copy', (_: unknown, e: any) => (copies.push(e.text), { value: { isCopied: true } }))
+  await start($, on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.resize({ columns: 40, rows: 10, in: 'tree' })
+
+  await click(ui, 1)
+  const picked = await lines(ui)
+  expect(picked).toHaveLength(3)
+  expect(picked[1]).toMatch(/^  README\.md.* 열기 복사$/)
+  expect(picked[0]).toBe('▸ data/')
+
+  // 폭 40칸: 오른쪽 표시 2칸 앞 ' 열기 복사' 10칸 → 29칸부터 '열기', 34칸부터 '복사'
+  await click(ui, 1, 30)
+  expect(runs).toEqual([['explorer.exe', `${ROOT}\\README.md`]])
+  await click(ui, 1, 35)
+  expect(copies).toEqual([`${ROOT}\\README.md`])
+  // 열기·복사를 눌러도 고른 채로 남고, 이름 쪽을 누르면 풀린다
+  expect((await lines(ui))[1]).toMatch(/열기 복사$/)
+  await click(ui, 1)
+  expect(await lines(ui)).toEqual(['▸ data/', '  README.md', '  zz.json'])
+
+  // 폴더도 같은 줄 오른쪽에: 펼친 자식들 사이에 줄이 끼지 않는다
+  await click(ui, 0)
+  expect((await lines(ui)).slice(1, 2)).toEqual(['│   dates.json'])
+  expect((await lines(ui))[0]).toMatch(/^▾ data\/.* 열기 복사$/)
+  await click(ui, 1)
+  await click(ui, 1, 35)
+  expect(copies[1]).toBe(`${ROOT}\\data\\dates.json`)
+  await ui.unmount()
+})
+
+test('Client가 없는 화면(VS Code)에서도 고른 줄 오른쪽에 열기·복사 버튼이 붙는다', async ($, on) => {
+  const copies: string[] = []
+  on('ui.copy', (_: unknown, e: any) => (copies.push(e.text), { value: { isCopied: true } }))
+  await start($, on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'vscode' } as any)
+  expect(await ui.find({ type: 'Button', key: 'act-copy' })).toBeUndefined()
+  await ui.press({ key: 'open:README.md' })
+  await ui.press({ key: 'act-copy' })
+  expect(copies).toEqual([`${ROOT}\\README.md`])
+  await ui.unmount()
+})
+
+test('강조색: 추천색을 고르면 고른 줄·[열기]·세로줄이 그 색이 된다', { options: { accent: 'green' } }, async ($, on) => {
+  await start($, on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await click(ui, 1)
+  expect(JSON.stringify(await ui.drawn({ in: 'tree' }))).toContain('"color":"#4FB477"')
+  expect(JSON.stringify(await ui.drawn())).toContain('"color":"#4FB477"')
+  await ui.unmount()
+})
+
+// 파일 한 줄을 골라 목록 영역에 칠한 강조색을 본다
+async function pickedColor($: any, on: any): Promise<string> {
+  await start($, on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await click(ui, 1)
+  const drawn = JSON.stringify(await ui.drawn({ in: 'tree' }))
+  await ui.unmount()
+
+  return /"color":"(#[0-9A-Fa-f]{6}|suggestion)"/.exec(drawn)?.[1] ?? ''
+}
+
+test('강조색 직접 지정: #RRGGBB 가 추천색보다 먼저 쓰인다', { options: { accent: 'pink', accentHex: '#123abc' } }, async ($, on) => {
+  expect(await pickedColor($, on)).toBe('#123abc')
+})
+
+test('강조색 직접 지정이 #RRGGBB 형식이 아니면 추천색을 쓴다', { options: { accent: 'pink', accentHex: '123abc' } }, async ($, on) => {
+  expect(await pickedColor($, on)).toBe('#F472B6')
+})
+
+test('강조색 기본값(theme)은 Claude Code 테마의 강조색을 따른다', async ($, on) => {
+  expect(await pickedColor($, on)).toBe('suggestion')
+})
+
+test('classic 도 강조색을 고르면 폴더 이름·[열기]·검색칸 테두리가 그 색이 된다', { options: { look: 'classic', accent: 'purple' } }, async ($, on) => {
+  await start($, on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(JSON.stringify(await ui.drawn({ in: 'tree' }))).toContain('"color":"#A78BFA"')
+  expect(JSON.stringify(await ui.drawn({ in: 'tree' }))).not.toContain('"color":"cyan"')
+  expect(JSON.stringify(await ui.drawn())).toContain('"borderColor":"#A78BFA"')
+  await ui.unmount()
+})
+
+test('classic 에 강조색 기본값(theme)이면 원래 색 그대로 (폴더 cyan)', { options: { look: 'classic' } }, async ($, on) => {
+  await start($, on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(JSON.stringify(await ui.drawn({ in: 'tree' }))).toContain('"color":"cyan"')
+  expect(JSON.stringify(await ui.drawn())).toContain('"borderColor":"suggestion"')
   await ui.unmount()
 })

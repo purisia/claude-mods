@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
-import type { Entry, ListAct, ListProps, ListRow, MadeAct, MadeItem, MadeProps, TouchKind, Touched } from '../types'
+import type { ActionsAt, Entry, ListAct, ListProps, ListRow, Look, MadeAct, MadeItem, MadeProps, TouchKind, Touched } from '../types'
 
 const PANE = 'project-tree'
 // 오른쪽 탭의 폭 (터미널 폭의 45%까지만 열린다)
@@ -30,6 +30,23 @@ const DEFAULT_RECENT_LIMIT = 8
 const MIN_RECENT_LIMIT = 1
 const MAX_RECENT_LIMIT = 30
 const recentLimit = atom({ plugin: 'project-tree', key: 'recentLimit' } as const, DEFAULT_RECENT_LIMIT)
+// 강조색 추천표 (/config 의 accent). theme은 Claude Code 테마의 강조색 이름을 그대로 쓴다
+const ACCENTS: Record<string, string> = {
+  theme: 'suggestion',
+  blue: '#5C9CF5',
+  green: '#4FB477',
+  purple: '#A78BFA',
+  orange: '#F59E42',
+  pink: '#F472B6',
+  cyan: '#2EC4D6',
+}
+
+function accentOf(hex: unknown, name: unknown): string {
+  if (typeof hex === 'string' && /^#[0-9a-fA-F]{6}$/.test(hex.trim())) return hex.trim()
+
+  return (typeof name === 'string' && ACCENTS[name]) || 'suggestion'
+}
+
 // 만든 파일은 +, 고친 파일은 ~ (diff의 추가·변경 표기)
 const MARKS: Record<TouchKind, string> = { new: '+', edit: '~' }
 
@@ -378,8 +395,12 @@ async function reveal($: EngineInterface, full: string, kind: TouchKind) {
 
 // 목록에서 누른 것을 처리한다 (Client 영역의 post, 또는 Client가 없는 화면의 버튼)
 // 폴더는 펼치거나 접으면서 고르고, 파일은 고른다. 이미 고른 줄을 다시 누르면 고르기를 푼다
-async function listAct($: EngineInterface, { act, path }: ListAct) {
-  if (act === 'toggle') await toggle($, path)
+// open·copy는 고른 줄 아래 actions 줄에서 온다 (고른 채로 둔다)
+async function listAct($: EngineInterface, request: ListAct) {
+  const { path } = request
+  if (request.act === 'open') return openSelected($, path, request.isDir)
+  if (request.act === 'copy') return copyPath($, path)
+  if (request.act === 'toggle') await toggle($, path)
   await update($, selected, value => (value === path ? null : path))
 }
 
@@ -412,6 +433,16 @@ function openTab($: EngineInterface) {
 
 export const register: Register = (on, options) => {
   const limit = clampLimit(options.recentLimit)
+  // 탭 모양 (/config 의 look, 바꾸면 모듈이 새 값으로 다시 읽힌다)
+  const look: Look = options.look === 'classic' ? 'classic' : 'modern'
+  // 열기·경로 복사 자리 (/config 의 actionsAt): 고른 줄 오른쪽 끝, 또는 검색칸 아래 고정
+  // (0.5의 below 값이 남아 있으면 right로 읽는다)
+  const actionsAt: ActionsAt = options.actionsAt === 'top' ? 'top' : 'right'
+  // modern 강조색 (/config 의 accentHex가 #RRGGBB면 그것, 아니면 accent 추천색, theme이면 Claude Code 테마 강조색)
+  const accent = accentOf(options.accentHex, options.accent)
+  // classic은 강조색이 theme(기본)이면 원래 색(폴더 cyan, 검색칸 테두리 suggestion, [열기] claude) 그대로,
+  // 추천색·직접 지정이면 그 색으로 칠한다. 목록 영역에는 빈 문자열로 '원래 색'을 넘긴다
+  const classicAccent = accent === 'suggestion' ? '' : accent
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -486,8 +517,10 @@ export const register: Register = (on, options) => {
 
   // 목록 영역(tree-list.tsx)이 보낸 누르기
   on('ui.message', { element: 'tree' }, async ($, e) => {
-    const data = e.data as Partial<ListAct> | null
-    if (data && typeof data.path === 'string' && typeof data.act === 'string') await listAct($, data as ListAct)
+    const data = e.data as Partial<{ act: string; path: string; isDir: boolean }> | null
+    if (typeof data?.path !== 'string') return {}
+    if (data.act === 'open') await listAct($, { act: 'open', path: data.path, isDir: data.isDir === true })
+    else if (data.act === 'toggle' || data.act === 'select' || data.act === 'copy') await listAct($, { act: data.act, path: data.path })
 
     return {}
   })
@@ -620,18 +653,31 @@ export const register: Register = (on, options) => {
       }
     }
 
-    // 검색어가 있으면 트리 대신 이름이 맞는 파일을 경로째 늘어놓는다
+    // 검색어가 있으면 트리 대신 이름이 맞는 파일을 늘어놓는다
+    // classic은 경로째, modern은 이름을 앞에 두고 폴더를 뒤에 흐리게 (좁아도 이름이 잘리지 않게)
+    const found = text
+      ? ((await read($, index)) ?? []).filter(path => baseName(path).toLowerCase().includes(text.toLowerCase()))
+      : []
     if (text) {
-      const files = (await read($, index)) ?? []
-      const needle = text.toLowerCase()
-      const found = files.filter(path => baseName(path).toLowerCase().includes(needle))
-      for (const path of found.slice(0, RESULT_LIMIT)) file(path, path, 0)
+      for (const path of found.slice(0, RESULT_LIMIT)) {
+        if (look === 'classic') {
+          file(path, path, 0)
+          continue
+        }
+        const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+        rows.push({ id: path, kind: 'file', depth: 0, label: baseName(path), ...(dir ? { detail: dir } : {}), ...flags(path, markOf(path)) })
+      }
       if (found.length > RESULT_LIMIT) {
         rows.push({ id: '…', kind: 'note', depth: 0, label: `… ${found.length - RESULT_LIMIT}개 더` })
       }
     } else {
       walk('', 0)
     }
+
+    // actionsAt이 right면 고른 줄 오른쪽 끝에 '열기 복사'를 붙인다 (줄을 끼우지 않아 트리 모양이 그대로다)
+    const at = actionsAt === 'right' ? rows.findIndex(one => one.id === chosen && one.kind !== 'note') : -1
+    const picked = rows[at]
+    if (picked) rows[at] = { ...picked, hasActions: true }
 
     // Client가 없는 화면(VS Code·모바일)에서는 같은 줄을 버튼으로 그린다
     const fallback = (row: ListRow) => {
@@ -641,8 +687,30 @@ export const register: Register = (on, options) => {
           {row.kind === 'dir' ? ' •' : ` ${MARKS[row.mark]}`}
         </Text>
       ) : null
-      // 고른 줄은 글자를 뒤집어 그린다
-      const pick = (label: string) => <Text inverse={row.isSelected === true}>{label}</Text>
+      // 고른 줄은 classic은 글자를 뒤집고, modern은 강조색·굵게 (폴더는 흐리게)
+      const isSelected = row.isSelected === true
+      const pick = (label: string) =>
+        look === 'classic' ? (
+          <Text inverse={isSelected}>{label}</Text>
+        ) : (
+          <Text {...(isSelected ? { color: accent } : {})} bold={isSelected} dimColor={row.kind === 'dir' && !isSelected}>
+            {label}
+            {row.detail ? <Text dimColor>{`  ${row.detail}`}</Text> : null}
+          </Text>
+        )
+      // 고른 줄 오른쪽 끝의 작은 '열기 복사' (actionsAt이 right일 때)
+      const tail = row.hasActions ? (
+        <Box gap={1} marginLeft={1}>
+          <Button key="act-open" label="열기" plain onPress={() => listAct($, { act: 'open', path: row.id, isDir: row.kind === 'dir' })}>
+            <Text color={(look === 'classic' ? classicAccent : accent) || 'green'} bold>
+              열기
+            </Text>
+          </Button>
+          <Button key="act-copy" label="복사" plain onPress={() => listAct($, { act: 'copy', path: row.id })}>
+            <Text bold>복사</Text>
+          </Button>
+        </Box>
+      ) : null
       if (row.kind === 'dir') {
         const label = `${indent}${row.isOpen ? '▾' : '▸'} ${row.label}/`
         return (
@@ -650,6 +718,7 @@ export const register: Register = (on, options) => {
             <Button key={`dir:${row.id}`} label={label} plain onPress={() => listAct($, { act: 'toggle', path: row.id })}>
               {pick(label)}
             </Button>
+            {tail}
             {mark}
           </Box>
         )
@@ -661,6 +730,7 @@ export const register: Register = (on, options) => {
             <Button key={`open:${row.id}`} label={label} plain onPress={() => listAct($, { act: 'select', path: row.id })}>
               {pick(label)}
             </Button>
+            {tail}
             {mark}
           </Box>
         )
@@ -681,7 +751,7 @@ export const register: Register = (on, options) => {
           key="tree"
           module="./tree-list.tsx"
           width="100%"
-          props={{ rows } satisfies ListProps}
+          props={{ rows, look, accent: look === 'classic' ? classicAccent : accent } satisfies ListProps}
         />
       ) : (
         rows.map(fallback)
@@ -695,23 +765,44 @@ export const register: Register = (on, options) => {
       await search($, '')
       await $.ui.focus({ requestId: e.requestId, key: `search-${await read($, resets)}` }).catch(() => undefined)
     }
-    const searchBox =
+    const input =
       'Input' in elements ? (
+        <elements.Input
+          key={field}
+          {...(look === 'classic' ? { label: '🔍 ' } : {})}
+          placeholder="파일 이름 검색 · Enter"
+          submitLabel="검색"
+          autoFocus
+          onSubmit={async value => {
+            await search($, value.trim())
+            await $.ui.focus({ requestId: e.requestId, key: field }).catch(() => undefined)
+          }}
+        />
+      ) : null
+    // modern: 테두리 대신 왼쪽 강조색 세로줄 '┃' 하나로 검색칸 자리를 보인다 (한 줄)
+    // classic: 검색칸을 둥근 테두리로 감싼다 (커서를 올리면 테두리가 밝아진다)
+    const searchBox =
+      input === null ? null : look === 'modern' ? (
         <Box key="search-row" justifyContent="space-between">
-          <elements.Input
-            key={field}
-            label="/ "
-            placeholder="파일 이름 검색 · Enter"
-            submitLabel="검색"
-            autoFocus
-            onSubmit={async value => {
-              await search($, value.trim())
-              await $.ui.focus({ requestId: e.requestId, key: field }).catch(() => undefined)
-            }}
-          />
+          <Text color={accent}>┃ </Text>
+          <Box flexGrow={1} flexShrink={1}>
+            {input}
+          </Box>
           <Button key="clear" label="×" plain dimColor={!text} onPress={clear} />
         </Box>
-      ) : null
+      ) : (
+        <Box
+          key="search-row"
+          justifyContent="space-between"
+          borderStyle="round"
+          borderColor={classicAccent || 'suggestion'}
+          hover={{ borderColor: classicAccent || 'claude' }}
+          paddingX={1}
+        >
+          {input}
+          <Button key="clear" label="×" plain dimColor={!text} onPress={clear} />
+        </Box>
+      )
 
     // 고른 것이 폴더인지: 보이는 줄에서 찾고, 접혀 안 보이면 읽어 둔 목록·검색용 목록에서 찾는다
     // (어디에도 없으면 사라진 것이니 액션 줄은 안내만 보인다)
@@ -725,28 +816,106 @@ export const register: Register = (on, options) => {
       return (await read($, index))?.includes(path) ? false : undefined
     }
     const chosenIsDir = chosen === null ? undefined : await kindOf(chosen)
-    // 액션 줄은 검색칸 바로 아래 늘 같은 자리에 한 줄을 차지한다 (고르기 전엔 안내만, 그래야 눌러도 목록이 밀리지 않는다)
+    // 액션 줄은 검색칸 바로 아래 늘 같은 자리를 차지한다 (그래야 눌러도 목록이 밀리지 않는다)
+    // 고르기 전에도 버튼 자리를 흐리게 그려 둔다
+    // modern: 배경 없이 괄호 버튼 한 줄 ([열기]는 고른 줄과 같은 강조색, [경로 복사]는 기본색, 고르기 전엔 흐리게)
+    // (배경색 칩은 테마 색이 터미널마다 빨강·옅은 회색으로 나와 글자가 묻혀 쓰지 않는다)
+    // classic: 버튼마다 둥근 테두리
+    const isReady = chosen !== null && chosenIsDir !== undefined
+    const outline = (key: string, color: string, child: RenderChildren) => (
+      <Box key={key} borderStyle="round" borderColor={color} hover={{ borderColor: 'suggestion' }} paddingX={1}>
+        {child}
+      </Box>
+    )
+    // actionsAt이 right면 열기·복사는 목록 안(고른 줄 오른쪽)에 있으니 위에는 그리지 않는다
     const actions =
-      chosen !== null && chosenIsDir !== undefined ? (
-        <Box key="actions" gap={2}>
-          <Button key="act-open" label="열기" variant="primary" onPress={() => openSelected($, chosen, chosenIsDir)} />
-          <Button key="act-copy" label="경로 복사" onPress={() => copyPath($, chosen)} />
+      actionsAt === 'right' ? null : look === 'modern' ? (
+        <Box key="actions" gap={2} marginTop={1}>
+          {isReady
+            ? [
+                <Button key="act-open" label="열기" plain onPress={() => openSelected($, chosen, chosenIsDir)}>
+                  <Text color={accent} bold>
+                    [ 열기 ]
+                  </Text>
+                </Button>,
+                <Button key="act-copy" label="경로 복사" plain onPress={() => copyPath($, chosen)}>
+                  <Text bold>[ 경로 복사 ]</Text>
+                </Button>,
+              ]
+            : [
+                <Text key="act-open-off" dimColor>
+                  [ 열기 ]
+                </Text>,
+                <Text key="act-copy-off" dimColor>
+                  [ 경로 복사 ]
+                </Text>,
+              ]}
+          <Box flexShrink={1}>
+            <Text dimColor wrap="truncate-end">
+              {isReady ? `${baseName(chosen)}${chosenIsDir ? '/' : ''}` : '파일·폴더를 누르면 켜짐'}
+            </Text>
+          </Box>
+        </Box>
+      ) : isReady ? (
+        <Box key="actions" gap={1} alignItems="center">
+          {outline(
+            'act-open-box',
+            classicAccent || 'claude',
+            <Button key="act-open" label="열기" plain onPress={() => openSelected($, chosen, chosenIsDir)}>
+              <Text color={classicAccent || 'claude'} bold>
+                열기
+              </Text>
+            </Button>,
+          )}
+          {outline('act-copy-box', 'text', <Button key="act-copy" label="경로 복사" plain onPress={() => copyPath($, chosen)} />)}
           <Box flexShrink={1}>
             <Text dimColor wrap="truncate-end">{`${baseName(chosen)}${chosenIsDir ? '/' : ''}`}</Text>
           </Box>
         </Box>
       ) : (
-        <Box key="actions">
-          <Text dimColor wrap="truncate-end">
-            파일·폴더를 누르면 여기서 열기·경로 복사
-          </Text>
+        <Box key="actions" gap={1} alignItems="center">
+          <Box borderStyle="round" borderDimColor paddingX={1}>
+            <Text dimColor>열기</Text>
+          </Box>
+          <Box borderStyle="round" borderDimColor paddingX={1}>
+            <Text dimColor>경로 복사</Text>
+          </Box>
+          <Box flexShrink={1}>
+            <Text dimColor wrap="truncate-end">
+              파일·폴더를 누르면 켜짐
+            </Text>
+          </Box>
         </Box>
       )
 
     // 머리줄(프로젝트 📂), 그 아래 검색칸·액션 줄·트리, 맨 밑에 최근 작업
     // (목록은 저절로 다시 읽으므로 새로고침 버튼은 두지 않는다. 설정은 /config 에서 한다)
+    // 탭 맨 위에 딱 붙지 않게 한 줄 띄운다
+    // modern: 이모지 없이 굵은 이름 + 흐린 안내, 오른쪽에 검색 결과 수. 머리줄과 트리 앞에 한 줄씩 띄우고 좌우도 한 칸
+    if (look === 'modern') {
+      return (
+        <Box flexDirection="column" paddingTop={1} paddingX={1}>
+          <Box justifyContent="space-between" marginBottom={1}>
+            <Box flexShrink={1}>
+              <Button key="folder:" label={`${root} 폴더 열기`} plain onPress={() => openFolder($, rootPath)}>
+                <Text bold>{root}</Text>
+                <Text dimColor> · 폴더 열기</Text>
+              </Button>
+            </Box>
+            {text ? <Text dimColor>{`${found.length}개`}</Text> : null}
+          </Box>
+          {searchBox}
+          {actions}
+          <Box marginTop={1} flexDirection="column">
+            {list}
+          </Box>
+          {madeBox}
+        </Box>
+      )
+    }
+
     return (
-      <Box flexDirection="column">
+      <Box flexDirection="column" paddingTop={1}>
         <Box>
           <Button key="folder:" label={`${root} 📂`} plain onPress={() => openFolder($, rootPath)}>
             <Text bold>{root}</Text>
