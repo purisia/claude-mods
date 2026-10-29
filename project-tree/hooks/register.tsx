@@ -15,7 +15,6 @@ const INDEX_LIMIT = 20_000
 const RESULT_LIMIT = 300
 const SKIP = new Set(['.git', 'node_modules'])
 
-const isFolded = atom({ plugin: 'project-tree', key: 'isFolded' } as const, false)
 const opened = atom({ plugin: 'project-tree', key: 'opened' } as const, [''])
 const listings = atom({ plugin: 'project-tree', key: 'listings' } as const, {})
 const query = atom({ plugin: 'project-tree', key: 'query' } as const, '')
@@ -104,7 +103,6 @@ async function refresh($: EngineInterface) {
 const WATCH_MS = 3000
 
 async function watch($: EngineInterface) {
-  if (await read($, isFolded)) return
   const paths = await read($, opened)
   const before = await read($, listings)
   const fresh: Record<string, Entry[]> = {}
@@ -424,26 +422,15 @@ function openTab($: EngineInterface) {
   return $.ui.open({ id: PANE, title: '프로젝트', columns: COLUMNS, backgroundColor: BACKGROUND })
 }
 
-// 탭을 접으면 닫고, 프롬프트 위에 다시 펼칠 버튼만 남긴다
-async function fold($: EngineInterface, isFolding: boolean) {
-  await update($, isFolded, () => isFolding)
-  if (isFolding) {
-    await $.ui.close({ id: PANE })
-    return
-  }
-  await refresh($)
-  await openTab($)
-}
-
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'tree',
-      description: '오른쪽 프로젝트 탭 접기·펼치기',
+      description: '오른쪽 프로젝트 탭 열기',
     })
     await loadRecentLimit($)
     await refresh($)
-    if (!(await read($, isFolded))) void openTab($)
+    void openTab($)
     if (/^[A-Za-z]:[\\/]/.test(await absolute($, '').catch(() => ''))) startRevealServer($)
     // 앞선 읽기가 끝나기 전에는 다음 읽기를 건너뛴다
     let isWatching = false
@@ -460,19 +447,12 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // Esc나 ctrl+x x로 닫은 탭을 다시 연다
   on('command.run', { command: 'tree' }, async $ => {
-    const isFolding = !(await read($, isFolded))
-    await fold($, isFolding)
+    await refresh($)
+    await openTab($)
 
-    return { text: isFolding ? '프로젝트 탭을 접었습니다.' : '프로젝트 탭을 펼쳤습니다.' }
-  })
-
-  // Esc나 ctrl+x x로 닫아도 접힌 것으로 본다
-  on('ui.close', { id: PANE }, async ($, e, next) => {
-    const done = await next(e)
-    if (e.origin.kind === 'person') await update($, isFolded, () => true)
-
-    return done
+    return { text: '프로젝트 탭을 열었습니다.' }
   })
 
   // 턴이 끝나면 Claude가 만들거나 지운 파일이 보이도록 다시 읽는다
@@ -529,24 +509,6 @@ export const register: Register = on => {
     }
 
     return {}
-  })
-
-  // 접혀 있을 때만 프롬프트 위 오른쪽 끝에 펼치기 버튼을 둔다
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey || !(await read($, isFolded))) return next(e)
-
-    const below = await next(e)
-    const { Box, Button } = $.ui.resolve(e)
-    const root = baseName(await $.session.root().catch(() => '프로젝트'))
-
-    return (
-      <Box flexDirection="column">
-        <Box justifyContent="flex-end">
-          <Button key="unfold" label={`« ${root}`} plain onPress={() => fold($, false)} />
-        </Box>
-        {below}
-      </Box>
-    )
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -790,7 +752,7 @@ export const register: Register = on => {
         </Box>
       ) : null
 
-    // 머리줄 한 줄(왼쪽 프로젝트 📂, 오른쪽 설정·접기), 그 아래 검색칸·트리, 맨 밑에 최근 작업
+    // 머리줄 한 줄(왼쪽 프로젝트 📂, 오른쪽 설정), 그 아래 검색칸·트리, 맨 밑에 최근 작업
     // (목록은 저절로 다시 읽으므로 새로고침 버튼은 두지 않는다)
     return (
       <Box flexDirection="column">
@@ -803,7 +765,6 @@ export const register: Register = on => {
           </Box>
           <Box gap={2} flexShrink={0} marginLeft={2}>
             <Button key="settings" label="설정" plain onPress={() => update($, isSettings, () => true)} />
-            <Button key="fold" label="접기 »" plain onPress={() => fold($, true)} />
           </Box>
         </Box>
         {searchBox}

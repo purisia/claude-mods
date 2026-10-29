@@ -95,35 +95,27 @@ test('세션이 시작되면 오른쪽 탭이 열리고, 목록에 폴더가 먼
   // 폴더 이름 뒤에 폴더 열기 📂
   expect(await lines(ui)).toEqual(['▸ data/ 📂', '  README.md', '  zz.json'])
   await ui.unmount()
-
-  // 펼쳐져 있을 때 프롬프트 위 띠에는 손대지 않는다
-  const band = await $.ui.mount({ ...BAND, surface: 'terminal' } as any)
-  expect(await band.find({ type: 'Button', key: 'unfold' })).toBeUndefined()
-  expect(await band.find({ type: 'Text', text: /^METER$/ })).toBeDefined()
-  await band.unmount()
 })
 
-test('접으면 탭이 닫히고 띠의 펼치기 버튼으로 다시 열린다', async ($, on) => {
-  const panes = await start($, on)
+test('접기 기능은 없다: 머리줄에 접기 버튼이 없고 프롬프트 위 띠에도 손대지 않는다', async ($, on) => {
+  await start($, on)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await ui.press({ key: 'fold' })
+  expect(await ui.find({ type: 'Button', key: 'fold' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'settings' })).toBeDefined()
   await ui.unmount()
-  expect(panes.closed).toEqual(['project-tree'])
 
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' } as any)
-  expect(await band.find({ type: 'Text', text: /^METER$/ })).toBeDefined()
-  await band.press({ key: 'unfold' })
-  expect(panes.open).toEqual(['project-tree', 'project-tree'])
   expect(await band.find({ type: 'Button', key: 'unfold' })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: /^METER$/ })).toBeDefined()
   await band.unmount()
 })
 
-test('/tree 로도 접고 펼친다', async ($, on) => {
+test('/tree 는 탭을 열기만 한다 (몇 번을 해도 닫지 않는다)', async ($, on) => {
   const panes = await start($, on)
   await $.command.run({ command: 'tree', args: '' } as any)
-  expect(panes.closed).toEqual(['project-tree'])
   await $.command.run({ command: 'tree', args: '' } as any)
-  expect(panes.open).toEqual(['project-tree', 'project-tree'])
+  expect(panes.closed).toEqual([])
+  expect(panes.open).toEqual(['project-tree', 'project-tree', 'project-tree'])
 })
 
 test('폴더 줄을 누르면 펼쳐지고 다시 누르면 접힌다', async ($, on) => {

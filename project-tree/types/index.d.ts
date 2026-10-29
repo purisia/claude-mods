@@ -34,8 +34,6 @@ export type MadeAct = { act: 'pick' | 'file' | 'folder' | 'copy'; path: string }
 declare module 'claude-code' {
   interface PluginState {
     'project-tree': {
-      // 패널 전체를 접었는지
-      isFolded: boolean
       // 펼친 폴더의 경로 (프로젝트 루트 기준, 루트는 '')
       opened: string[]
       // 읽어 둔 폴더 목록, 경로별
