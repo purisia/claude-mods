@@ -1,0 +1,6 @@
+{
+  "name": "tool-history",
+  "version": "0.2.0",
+  "description": "/tool-history — 이 세션에서 한 일을 요청별로: 스킬·파일 수정·git·Slack 등 외부 서비스·실패 사유를 우측 패널로 (내부 동작은 전체 보기)",
+  "types": "./types/index.d.ts"
+}
